@@ -4,3 +4,18 @@ body          { font-size: 0.875rem; }
 pre           { font-size: 0.8rem; }
 td.js-target-username { cursor: pointer; color: #0d6efd; }
 td.td-detail          { max-width: 220px; }
+
+/* Action checkboxes in the quarantine table */
+#userTable input[type="checkbox"] {
+  width: 1.6rem;
+  height: 1.6rem;
+  cursor: pointer;
+  border: 2px solid #0d6efd;
+  background-color: #e8f0fe;
+  accent-color: #0d6efd;
+  flex-shrink: 0;
+}
+#userTable input[type="checkbox"]:checked {
+  background-color: #0d6efd;
+  border-color: #0d6efd;
+}

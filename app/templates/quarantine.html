@@ -12,9 +12,12 @@
   <div class="col-md-6">
     <div class="card h-100">
       <div class="card-body">
-        <h6 class="card-title">Enter Usernames</h6>
+        <h6 class="card-title">Enter Usernames <small class="text-muted fw-normal">(max 20)</small></h6>
         <textarea id="usernameInput" class="form-control font-monospace" rows="5"
                   placeholder="One per line, or comma / semicolon separated"></textarea>
+        <div class="d-flex justify-content-end mt-1">
+          <small id="usernameCount" class="text-muted">0 / 20</small>
+        </div>
       </div>
     </div>
   </div>
@@ -30,10 +33,10 @@
   <div class="d-flex justify-content-between align-items-center mb-2 flex-wrap gap-2">
     <h6 class="mb-0">Users found</h6>
     <div class="btn-group btn-group-sm flex-wrap" role="group" aria-label="Select all actions">
-      <button class="btn btn-outline-secondary" data-select-action="ad_disable">All: Disable AD</button>
-      <button class="btn btn-outline-secondary" data-select-action="ad_reset_password">All: Reset AD PW</button>
-      <button class="btn btn-outline-secondary" data-select-action="gw_suspend">All: Suspend GW</button>
-      <button class="btn btn-outline-secondary" data-select-action="gw_reset_cookies">All: Reset GW Cookies</button>
+      <button class="btn btn-outline-secondary" data-select-action="ad_disable">All: Disable Active Directory</button>
+      <button class="btn btn-outline-secondary" data-select-action="ad_reset_password">All: Reset Active Directory Password</button>
+      <button class="btn btn-outline-secondary" data-select-action="gw_suspend">All: Suspend Google Workspace</button>
+      <button class="btn btn-outline-secondary" data-select-action="gw_reset_cookies">All: Reset Google Workspace Cookies</button>
       <button class="btn btn-outline-secondary" data-select-action="entra_revoke_sessions">All: Revoke Entra</button>
       <button class="btn btn-outline-danger" id="clearAllBtn">Clear All</button>
     </div>
@@ -46,12 +49,12 @@
           <th>Username</th>
           <th>Display Name</th>
           <th>Domain</th>
-          <th>AD Status</th>
-          <th class="text-center">Disable AD</th>
-          <th class="text-center">Reset AD PW</th>
-          <th class="text-center">Suspend GW</th>
-          <th class="text-center">Reset GW Cookies</th>
-          <th class="text-center">Revoke Entra</th>
+          <th><i class="bi bi-shield-check me-1"></i>Active Directory Status</th>
+          <th class="text-center"><i class="bi bi-slash-circle me-1"></i>Disable Active Directory</th>
+          <th class="text-center"><i class="bi bi-key me-1"></i>Reset Active Directory Password</th>
+          <th class="text-center"><i class="bi bi-pause-circle me-1"></i>Suspend Google Workspace</th>
+          <th class="text-center"><i class="bi bi-cookie me-1"></i>Reset Google Workspace Cookies</th>
+          <th class="text-center"><i class="bi bi-door-closed me-1"></i>Revoke Entra</th>
         </tr>
       </thead>
       <tbody id="userTableBody"></tbody>

@@ -71,10 +71,20 @@ def lookup():
 
     if not usernames:
         return jsonify({'error': 'No valid usernames provided.'}), 400
-    if len(usernames) > 200:
-        return jsonify({'error': 'Maximum 200 usernames per request.'}), 400
+    if len(usernames) > 20:
+        return jsonify({'error': 'Maximum 20 usernames per request.'}), 400
 
     results = active_directory.lookup_users(current_app.config, usernames)
+
+    # Enrich found users with GW last login (best-effort; never blocks the response)
+    gw_configured = not google_workspace._not_configured(current_app.config)
+    if gw_configured:
+        for user in results:
+            if user.get('found'):
+                user['gw_last_login'] = google_workspace.get_last_login(
+                    current_app.config, user['username']
+                )
+
     return jsonify({'users': results})
 
 

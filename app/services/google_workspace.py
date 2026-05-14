@@ -19,7 +19,10 @@ from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
-_SCOPES = ['https://www.googleapis.com/auth/admin.directory.user']
+_SCOPES = [
+    'https://www.googleapis.com/auth/admin.directory.user',
+    'https://www.googleapis.com/auth/admin.directory.user.security',
+]
 
 
 def _get_service(cfg):
@@ -86,6 +89,31 @@ def unsuspend_user(cfg: dict, username: str) -> tuple:
         return 'error', f'Google API error {exc.status_code}: {exc.reason}'
     except Exception as exc:
         return 'error', str(exc)
+
+
+def get_last_login(cfg: dict, username: str) -> str:
+    """Return the user's last login time as a formatted string, or '' on failure.
+
+    The Admin SDK returns lastLoginTime in ISO-8601 format (UTC).
+    Returns a display string like '2026-05-14 10:30 UTC' or '' if unknown.
+    """
+    if _not_configured(cfg):
+        return ''
+    try:
+        service = _get_service(cfg)
+        user_key = _resolve_user_key(cfg, username)
+        user = service.users().get(
+            userKey=user_key,
+            projection='basic',
+            fields='lastLoginTime',
+        ).execute()
+        raw = user.get('lastLoginTime', '')
+        if not raw or raw == '1970-01-01T00:00:00.000Z':
+            return ''
+        # Format: "2026-05-14T10:30:00.000Z" → "2026-05-14 10:30 UTC"
+        return raw[:16].replace('T', ' ') + ' UTC'
+    except Exception:
+        return ''
 
 
 def reset_sign_in_cookies(cfg: dict, username: str) -> tuple:

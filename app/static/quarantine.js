@@ -3,10 +3,10 @@
 const CSRF_TOKEN = document.querySelector('meta[name="csrf-token"]').getAttribute('content');
 
 const ACTION_LABELS = {
-  ad_disable:            'Disable AD account',
-  ad_reset_password:     'Reset AD password',
+  ad_disable:            'Disable Active Directory account',
+  ad_reset_password:     'Reset Active Directory password',
   gw_suspend:            'Suspend Google Workspace',
-  gw_reset_cookies:      'Reset GW sign-in cookies',
+  gw_reset_cookies:      'Reset Google Workspace sign-in cookies',
   entra_revoke_sessions: 'Revoke Entra ID sessions',
 };
 const ACTIONS = Object.keys(ACTION_LABELS);
@@ -44,6 +44,21 @@ document.querySelectorAll('[data-select-action]').forEach(btn => {
 document.getElementById('clearAllBtn').addEventListener('click', clearAllActions);
 
 /* ── Lookup ─────────────────────────────────────────────────────────────── */
+const MAX_USERNAMES = 20;
+
+function countUsernames(text) {
+  return text.trim() ? text.trim().split(/[\s,;]+/).filter(u => u.length > 0).length : 0;
+}
+
+const usernameInput = document.getElementById('usernameInput');
+const usernameCount = document.getElementById('usernameCount');
+usernameInput.addEventListener('input', () => {
+  const n = countUsernames(usernameInput.value);
+  usernameCount.textContent = `${n} / ${MAX_USERNAMES}`;
+  usernameCount.classList.toggle('text-danger', n > MAX_USERNAMES);
+  usernameCount.classList.toggle('text-muted', n <= MAX_USERNAMES);
+});
+
 document.getElementById('lookupBtn').addEventListener('click', async () => {
   const btn     = document.getElementById('lookupBtn');
   const spinner = document.getElementById('lookupSpinner');
@@ -52,6 +67,7 @@ document.getElementById('lookupBtn').addEventListener('click', async () => {
   try {
     const text = document.getElementById('usernameInput').value.trim();
     if (!text) { alert('Enter at least one username.'); return; }
+    if (countUsernames(text) > MAX_USERNAMES) { alert(`Maximum ${MAX_USERNAMES} usernames allowed.`); return; }
     const resp = await fetch('/lookup', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF_TOKEN },
@@ -98,9 +114,9 @@ function renderUserTable(users) {
       : '<em class="text-muted">Not found</em>';
 
     const checkboxes = ACTIONS.map(a =>
-      `<td class="text-center">${found
-        ? `<input type="checkbox" class="form-check-input" data-user="${esc(u.username)}" data-action="${a}">`
-        : '—'
+      `<td class="text-center" style="vertical-align:middle;">${found
+        ? `<input type="checkbox" class="form-check-input" style="width:1.6rem;height:1.6rem;cursor:pointer;border:2px solid #0d6efd;background-color:#e8f0fe;accent-color:#0d6efd;" data-user="${esc(u.username)}" data-action="${a}">`
+        : '<span class="text-muted">—</span>'
       }</td>`
     ).join('');
 
@@ -111,6 +127,9 @@ function renderUserTable(users) {
       if (u.modified) displayCell += `<br><span class="text-muted small"><strong>Modified:</strong> ${esc(u.modified)}</span>`;
       if (u.groups && u.groups.length) {
         displayCell += `<br><span class="text-muted small"><strong>Groups:</strong> ${u.groups.map(esc).join(', ')}</span>`;
+      }
+      if (u.gw_last_login) {
+        displayCell += `<br><span class="text-muted small"><strong>Google Workspace Last Login:</strong> ${esc(u.gw_last_login)}</span>`;
       }
     }
 
