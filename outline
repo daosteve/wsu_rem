@@ -1,0 +1,18 @@
+Web app: user quarantine
+
+Purpose: quarantine/remediate risky/compromised users. This should be a very small app, but security needs to strong.
+
+Back-end Operations:
+    Active Directory: disable username(s) and/or reset password to "xxxxxxxxxx"
+	Google Workspace: suspend username(s) and/or reset sign-in cookies
+	Entra ID: revoke all sign-in sessions for the affected username(s)
+    Operation email alerts
+    Log all operations to a database 
+
+Front-end: 
+    Operator inputs a username or a csv file of users to be quarantined
+    App displays username(s) in the table with disable and reset password options
+    "Not found" is displayed If a username doesn't exist in AD
+    A log search page for admins/operators
+
+    

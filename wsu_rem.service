@@ -1,0 +1,32 @@
+[Unit]
+Description=WSU Remediation App
+After=network.target postgresql.service
+
+[Service]
+User=wsu_rem
+Group=wsu_rem
+WorkingDirectory=/opt/wsu_rem
+EnvironmentFile=/opt/wsu_rem/.env
+
+# 2 sync workers is enough for a low-traffic internal security tool.
+# Increase if needed; never use more workers than (2 * CPU cores + 1).
+ExecStart=/opt/wsu_rem/venv/bin/gunicorn \
+    --workers 2 \
+    --bind 127.0.0.1:5001 \
+    --timeout 30 \
+    --access-logfile /var/log/wsu_rem/access.log \
+    --error-logfile  /var/log/wsu_rem/error.log \
+    wsgi:app
+
+Restart=on-failure
+RestartSec=5
+
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/opt/wsu_rem /var/log/wsu_rem
+PrivateTmp=true
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target

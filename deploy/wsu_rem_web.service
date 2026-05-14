@@ -1,0 +1,31 @@
+[Unit]
+Description=WSU Remediation Gunicorn service
+After=network.target postgresql.service
+
+[Service]
+Type=simple
+User=www-data
+Group=www-data
+WorkingDirectory=/opt/wsu_rem
+EnvironmentFile=/opt/wsu_rem/.env
+Environment=GUNICORN_BIND=unix:/run/wsu_rem/gunicorn.sock
+Environment=WSU_REM_ENV=production
+Environment=WSU_REM_TRUSTED_PROXY_COUNT=1
+RuntimeDirectory=wsu_rem
+RuntimeDirectoryMode=0750
+UMask=0027
+ExecStart=/opt/wsu_rem/venv/bin/gunicorn --config /opt/wsu_rem/gunicorn.conf.py wsgi:app
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/run/wsu_rem /opt/wsu_rem/secrets
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+LockPersonality=true
+MemoryDenyWriteExecute=true
+
+[Install]
+WantedBy=multi-user.target

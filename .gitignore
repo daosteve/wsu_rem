@@ -1,0 +1,24 @@
+# Environment & secrets
+.env
+.env.*
+secrets/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+venv/
+.venv/
+*.egg-info/
+
+# Flask instance (DB, session keys)
+instance/
+
+# Editor / OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# Logs
+*.log
