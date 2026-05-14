@@ -33,16 +33,44 @@ def _get_token(cfg: dict) -> str:
     return result['access_token']
 
 
+import re as _re
+_GUID_RE = _re.compile(
+    r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$',
+    _re.IGNORECASE,
+)
+
+
 def _not_configured(cfg: dict) -> bool:
     return not all(cfg.get(k) for k in ('ENTRA_TENANT_ID', 'ENTRA_CLIENT_ID', 'ENTRA_CLIENT_SECRET'))
+
+
+def _resolve_upn(cfg: dict, username: str) -> str:
+    """
+    Return a UPN or Object ID suitable for the Graph API /users/{id} path.
+
+    - If *username* already contains '@' (UPN) or is a GUID (Object ID),
+      it is returned as-is.
+    - Otherwise it is treated as a sAMAccountName and ENTRA_UPN_SUFFIX
+      (e.g. 'worcester.edu') is appended to form a UPN.
+    """
+    if '@' in username or _GUID_RE.match(username):
+        return username
+
+    suffix = cfg.get('ENTRA_UPN_SUFFIX', '').strip().lstrip('@')
+    if not suffix:
+        raise RuntimeError(
+            "ENTRA_UPN_SUFFIX is not configured. "
+            "Set it to your tenant's UPN suffix (e.g. worcester.edu) so that "
+            "sAMAccountNames can be resolved without requiring User.Read.All."
+        )
+    return f'{username}@{suffix}'
 
 
 def revoke_sessions(cfg: dict, username: str) -> tuple:
     """
     Revoke all Entra ID sign-in sessions for a user.
-    `username` can be the UPN (user@domain.com) or the Entra Object ID.
-    If you pass a sAMAccountName without a domain, append the UPN suffix or
-    look up the user's Object ID first.
+    Accepts a UPN (user@domain.com), an Entra Object ID, or a sAMAccountName.
+    For sAMAccountNames, ENTRA_UPN_SUFFIX must be set in config.
     """
     if _not_configured(cfg):
         return 'error', 'Entra ID is not configured (see .env.example)'
@@ -52,7 +80,8 @@ def revoke_sessions(cfg: dict, username: str) -> tuple:
             'Authorization': f'Bearer {token}',
             'Content-Type': 'application/json',
         }
-        url = f'{_GRAPH_ENDPOINT}/users/{username}/revokeSignInSessions'
+        upn = _resolve_upn(cfg, username)
+        url = f'{_GRAPH_ENDPOINT}/users/{upn}/revokeSignInSessions'
         resp = requests.post(url, headers=headers, timeout=15)
         if resp.status_code == 200:
             return 'success', 'All Entra ID sign-in sessions revoked'

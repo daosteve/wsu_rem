@@ -55,6 +55,9 @@ class Config:
     ENTRA_TENANT_ID = os.environ.get('ENTRA_TENANT_ID', '')
     ENTRA_CLIENT_ID = os.environ.get('ENTRA_CLIENT_ID', '')
     ENTRA_CLIENT_SECRET = os.environ.get('ENTRA_CLIENT_SECRET', '')
+    # UPN suffix used to build user@domain from a bare sAMAccountName.
+    # e.g. 'worcester.edu'  →  hdao10 becomes hdao10@worcester.edu
+    ENTRA_UPN_SUFFIX = os.environ.get('ENTRA_UPN_SUFFIX', '')
 
     # ── Rate limiting ─────────────────────────────────────────────────────────
     # Recommended: set to a Redis URL for persistent rate-limit storage.
