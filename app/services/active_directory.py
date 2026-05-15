@@ -290,27 +290,19 @@ def enable_user(cfg: dict, username: str, original_dn: str = None, operator: str
         # 2. Update Description
         wconn.modify(dn, {'description': [(MODIFY_REPLACE, [description])]})
 
-        # 3. Move back to the original OU when known, only if the original
-        #    location was an OU (not a bare CN= container like CN=Users).
+        # 3. Move back to the original container/OU when known.
         if original_dn:
             original_parent = ','.join(original_dn.split(',')[1:])  # strip CN=<name>
-            has_ou = any(
-                p.strip().upper().startswith('OU=')
-                for p in original_parent.split(',')
-            )
-            if not has_ou:
-                wconn.unbind()
-                return 'success', 'Account re-enabled (original location has no OU; not moved)'
             rdn = dn.split(',')[0]
             wconn.modify_dn(dn, rdn, new_superior=original_parent)
             move_result = wconn.result
             wconn.unbind()
             if move_result['result'] != 0:
                 return 'warning', (
-                    'Account re-enabled but could not move back to original OU: '
+                    'Account re-enabled but could not move back to original location: '
                     + move_result.get('description', '')
                 )
-            return 'success', 'Account re-enabled and moved back to original OU'
+            return 'success', 'Account re-enabled and moved back to original location'
 
         wconn.unbind()
         return 'warning', 'Account re-enabled (original OU unknown; not moved)'
