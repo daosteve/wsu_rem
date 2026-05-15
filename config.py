@@ -44,6 +44,9 @@ class Config:
 
     # ── AD remediation ────────────────────────────────────────────────────────
     AD_RESET_PASSWORD = os.environ['AD_RESET_PASSWORD']
+    # Name of the OU (within each sub-domain root) where disabled accounts are placed.
+    # e.g. "Disabled" → OU=Disabled,DC=WSC,DC=worcester,DC=local
+    AD_DISABLED_OU_NAME = os.environ.get('AD_DISABLED_OU_NAME', 'Disabled')
 
     # ── Google Workspace ──────────────────────────────────────────────────────
     # See docs/google_workspace_setup.md for service-account setup instructions

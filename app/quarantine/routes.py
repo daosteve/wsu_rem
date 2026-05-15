@@ -1,12 +1,13 @@
 import csv
 import io
 import re
+from datetime import datetime
 
 from flask import render_template, request, jsonify, current_app
 from flask_login import login_required, current_user
 
 from app.quarantine import bp
-from app.models import OperationLog
+from app.models import OperationLog, QuarantineRecord
 from app import db
 from app.services import active_directory, google_workspace, entra_id, email_alerts
 
@@ -14,6 +15,7 @@ _USERNAME_RE = re.compile(r'^[a-zA-Z0-9._\-]{1,64}$')
 
 VALID_ACTIONS = frozenset({
     'ad_disable',
+    'ad_enable',
     'ad_reset_password',
     'gw_suspend',
     'gw_reset_cookies',
@@ -22,6 +24,7 @@ VALID_ACTIONS = frozenset({
 
 SYSTEM_MAP = {
     'ad_disable': 'AD',
+    'ad_enable': 'AD',
     'ad_reset_password': 'AD',
     'gw_suspend': 'GW',
     'gw_reset_cookies': 'GW',
@@ -102,10 +105,14 @@ def execute():
 
     results = []
     log_entries = []
+    qr_to_add = []
+    qr_to_delete = []
 
     for item in actions:
         username = str(item.get('username', '')).strip()
-        action = str(item.get('action', '')).strip()
+        action   = str(item.get('action',   '')).strip()
+        reason   = str(item.get('reason',   '')).strip()[:128]
+        comment  = str(item.get('comment',  '')).strip()
 
         if not _USERNAME_RE.match(username):
             results.append({'username': username, 'action': action, 'result': 'error', 'detail': 'Invalid username.'})
@@ -119,7 +126,26 @@ def execute():
 
         try:
             if action == 'ad_disable':
-                result, detail = active_directory.disable_user(cfg, username)
+                res = active_directory.disable_user(cfg, username, reason=reason, comment=comment)
+                result, detail = res[0], res[1]
+                original_dn = res[2] if len(res) > 2 else None
+                if result == 'success' and original_dn:
+                    existing = QuarantineRecord.query.filter_by(username=username).first()
+                    if existing:
+                        existing.original_dn = original_dn
+                        existing.quarantined_at = datetime.utcnow()
+                    else:
+                        qr_to_add.append(QuarantineRecord(username=username, original_dn=original_dn))
+            elif action == 'ad_enable':
+                rec = QuarantineRecord.query.filter_by(username=username).first()
+                original_dn = rec.original_dn if rec else None
+                result, detail = active_directory.enable_user(
+                    cfg, username,
+                    original_dn=original_dn,
+                    operator=current_user.username,
+                )
+                if result == 'success' and rec:
+                    qr_to_delete.append(rec)
             elif action == 'ad_reset_password':
                 result, detail = active_directory.reset_password(cfg, username)
             elif action == 'gw_suspend':
@@ -139,10 +165,15 @@ def execute():
             system=SYSTEM_MAP[action],
             result=result,
             detail=detail,
+            reason=reason or None,
+            comment=comment or None,
         ))
 
-    if log_entries:
+    if log_entries or qr_to_add or qr_to_delete:
         db.session.add_all(log_entries)
+        db.session.add_all(qr_to_add)
+        for rec in qr_to_delete:
+            db.session.delete(rec)
         db.session.commit()
 
     # Best-effort email alert

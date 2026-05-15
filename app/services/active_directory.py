@@ -97,6 +97,17 @@ def _extract_subdomain(dn: str, base_dn: str):
     return dn_dcs[0].upper()
 
 
+def _disabled_ou_dn(cfg: dict, user_dn: str) -> str:
+    """Return the DN of the Disabled OU at the root of the user's sub-domain.
+
+    Example (AD_DISABLED_OU_NAME='Disabled', user in DC=WSC,DC=worcester,DC=local):
+      → 'OU=Disabled,DC=WSC,DC=worcester,DC=local'
+    """
+    ou_name = cfg.get('AD_DISABLED_OU_NAME', 'Disabled')
+    dc_parts = [p.strip() for p in user_dn.split(',') if p.strip().upper().startswith('DC=')]
+    return f'OU={ou_name},' + ','.join(dc_parts)
+
+
 def _is_organizational_user(dn: str) -> bool:
     """
     Return True only if the DN contains at least one OU= component between the
@@ -196,46 +207,105 @@ def lookup_users(cfg: dict, usernames: list) -> list:
     return results
 
 
-def disable_user(cfg: dict, username: str) -> tuple:
-    """Disable an AD account by setting the ACCOUNTDISABLE bit."""
+def disable_user(cfg: dict, username: str, reason: str = '', comment: str = '') -> tuple:
+    """Disable an AD account, set its Description, and move it to the Disabled OU.
+
+    Returns a 3-tuple: (result, detail, original_dn).
+    original_dn is the DN *before* the move and is None on failure.
+    """
     try:
-        # Lookup via Global Catalog (read-only, spans all child domains)
         gc_conn = _svc_conn(cfg)
         dn, entry = _find_user(gc_conn, cfg, username)
         gc_conn.unbind()
         if dn is None:
-            return 'error', 'User not found in AD'
+            return 'error', 'User not found in AD', None
+
+        original_dn = dn  # capture before the account is moved
         uac = int(entry.userAccountControl.value) if entry.userAccountControl else _ADS_UF_NORMAL_ACCOUNT
         new_uac = uac | _ADS_UF_ACCOUNTDISABLE
-        # Write via the authoritative domain DC on port 636
+
+        disabled_ou = _disabled_ou_dn(cfg, dn)
+
+        # Build the Description value
+        desc_parts = []
+        if reason:
+            desc_parts.append(f'Quarantine Reason: {reason}')
+        if comment:
+            desc_parts.append(f'Comment: {comment}')
+        description = ' | '.join(desc_parts) if desc_parts else 'Quarantined'
+
         wconn = _write_conn(cfg, dn)
+
+        # 1. Disable the account
         wconn.modify(dn, {'userAccountControl': [(MODIFY_REPLACE, [new_uac])]})
-        modify_result = wconn.result
+        if wconn.result['result'] != 0:
+            err = wconn.result.get('description', 'Disable failed')
+            wconn.unbind()
+            return 'error', err, None
+
+        # 2. Set Description (best-effort; do not fail the whole operation)
+        wconn.modify(dn, {'description': [(MODIFY_REPLACE, [description])]})
+
+        # 3. Move the account to the Disabled OU
+        rdn = dn.split(',')[0]  # e.g. 'CN=John Smith'
+        wconn.modify_dn(dn, rdn, new_superior=disabled_ou)
+        move_result = wconn.result
         wconn.unbind()
-        if modify_result['result'] == 0:
-            return 'success', f'Account disabled (UAC={new_uac})'
-        return 'error', modify_result.get('description', 'Modify failed')
+
+        if move_result['result'] == 0:
+            return 'success', f'Account disabled and moved to Disabled OU', original_dn
+        return 'error', move_result.get('description', 'Move to Disabled OU failed'), None
     except LDAPException as exc:
-        return 'error', str(exc)
+        return 'error', str(exc), None
 
 
-def enable_user(cfg: dict, username: str) -> tuple:
-    """Re-enable an AD account by clearing the ACCOUNTDISABLE bit."""
+def enable_user(cfg: dict, username: str, original_dn: str = None, operator: str = '') -> tuple:
+    """Re-enable an AD account, update its Description, and move it back to its original OU.
+
+    original_dn: the DN the account held before it was quarantined (used to
+                 determine the target OU on restore).  When None the account
+                 is re-enabled in place without being moved.
+    operator:    display name / username of the operator performing the action.
+    """
     try:
         gc_conn = _svc_conn(cfg)
         dn, entry = _find_user(gc_conn, cfg, username)
         gc_conn.unbind()
         if dn is None:
             return 'error', 'User not found in AD'
+
         uac = int(entry.userAccountControl.value) if entry.userAccountControl else _ADS_UF_NORMAL_ACCOUNT
         new_uac = uac & ~_ADS_UF_ACCOUNTDISABLE
+        description = f'Re-enabled by {operator}' if operator else 'Re-enabled'
+
         wconn = _write_conn(cfg, dn)
+
+        # 1. Re-enable the account
         wconn.modify(dn, {'userAccountControl': [(MODIFY_REPLACE, [new_uac])]})
-        modify_result = wconn.result
+        if wconn.result['result'] != 0:
+            err = wconn.result.get('description', 'Enable failed')
+            wconn.unbind()
+            return 'error', err
+
+        # 2. Update Description
+        wconn.modify(dn, {'description': [(MODIFY_REPLACE, [description])]})
+
+        # 3. Move back to the original OU when known
+        if original_dn:
+            original_parent = ','.join(original_dn.split(',')[1:])  # strip the leading CN=
+            rdn = dn.split(',')[0]
+            wconn.modify_dn(dn, rdn, new_superior=original_parent)
+            move_result = wconn.result
+            wconn.unbind()
+            if move_result['result'] != 0:
+                return 'error', (
+                    'Account re-enabled but could not move back to original OU: '
+                    + move_result.get('description', '')
+                )
+            return 'success', 'Account re-enabled and moved back to original OU'
+
         wconn.unbind()
-        if modify_result['result'] == 0:
-            return 'success', f'Account re-enabled (UAC={new_uac})'
-        return 'error', modify_result.get('description', 'Modify failed')
+        return 'success', 'Account re-enabled (original OU unknown; not moved)'
     except LDAPException as exc:
         return 'error', str(exc)
 

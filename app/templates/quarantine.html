@@ -34,6 +34,7 @@
     <h6 class="mb-0">Users found</h6>
     <div class="btn-group btn-group-sm flex-wrap" role="group" aria-label="Select all actions">
       <button class="btn btn-outline-secondary" data-select-action="ad_disable">All: Disable Active Directory</button>
+      <button class="btn btn-outline-secondary" data-select-action="ad_enable">All: Enable Active Directory</button>
       <button class="btn btn-outline-secondary" data-select-action="ad_reset_password">All: Reset Active Directory Password</button>
       <button class="btn btn-outline-secondary" data-select-action="gw_suspend">All: Suspend Google Workspace</button>
       <button class="btn btn-outline-secondary" data-select-action="gw_reset_cookies">All: Reset Google Workspace Cookies</button>
@@ -47,7 +48,9 @@
       <thead class="table-dark">
         <tr>
           <th>User Details</th>
+          <th>Quarantine Reason</th>
           <th class="text-center"><i class="bi bi-slash-circle me-1"></i>Disable Active Directory</th>
+          <th class="text-center"><i class="bi bi-check-circle me-1"></i>Enable Active Directory</th>
           <th class="text-center"><i class="bi bi-key me-1"></i>Reset Active Directory Password</th>
           <th class="text-center"><i class="bi bi-pause-circle me-1"></i>Suspend Google Workspace</th>
           <th class="text-center"><i class="bi bi-cookie me-1"></i>Reset Google Workspace Cookies</th>

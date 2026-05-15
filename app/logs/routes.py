@@ -90,6 +90,8 @@ def search():
             'system': r.system,
             'result': r.result,
             'detail': r.detail or '',
+            'reason':  r.reason  or '',
+            'comment': r.comment or '',
         }
         for r in pagination.items
     ]

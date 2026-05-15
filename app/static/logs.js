@@ -117,7 +117,7 @@ function renderLogs(data) {
   tbody.innerHTML = '';
 
   if (!data.rows.length) {
-    tbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted">No matching records.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted">No matching records.</td></tr>';
   } else {
     data.rows.forEach(r => {
       const tr = document.createElement('tr');
@@ -128,6 +128,7 @@ function renderLogs(data) {
         <td><span class="badge bg-secondary">${esc(r.system)}</span></td>
         <td class="small">${esc(r.action.replace(/_/g, ' '))}</td>
         <td><span class="badge bg-${r.result === 'success' ? 'success' : 'danger'}">${esc(r.result)}</span></td>
+        <td class="small">${r.reason ? `<span class="badge bg-warning text-dark me-1">${esc(r.reason)}</span>` : ''}${r.comment ? esc(r.comment) : ''}</td>
         <td class="small text-truncate td-detail" title="${esc(r.detail)}">${esc(r.detail)}</td>
       `;
       tbody.appendChild(tr);

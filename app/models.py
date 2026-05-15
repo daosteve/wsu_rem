@@ -37,3 +37,16 @@ class OperationLog(db.Model):
     system = db.Column(db.String(32), nullable=False)   # AD | GW | Entra
     result = db.Column(db.String(16), nullable=False)   # success | error
     detail = db.Column(db.Text)
+    reason  = db.Column(db.String(128))                  # quarantine reason
+    comment = db.Column(db.Text)                         # optional operator comment
+
+
+class QuarantineRecord(db.Model):
+    """Tracks the original AD DN of quarantined accounts so they can be
+    moved back to their original OU when re-enabled."""
+    __tablename__ = 'quarantine_records'
+
+    id = db.Column(db.Integer, primary_key=True)
+    username = db.Column(db.String(128), nullable=False, unique=True, index=True)
+    original_dn = db.Column(db.Text, nullable=False)
+    quarantined_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)

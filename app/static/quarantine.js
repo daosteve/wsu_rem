@@ -4,12 +4,23 @@ const CSRF_TOKEN = document.querySelector('meta[name="csrf-token"]').getAttribut
 
 const ACTION_LABELS = {
   ad_disable:            'Disable Active Directory account',
+  ad_enable:             'Enable Active Directory account',
   ad_reset_password:     'Reset Active Directory password',
   gw_suspend:            'Suspend Google Workspace',
   gw_reset_cookies:      'Reset Google Workspace sign-in cookies',
   entra_revoke_sessions: 'Revoke Entra ID sessions',
 };
 const ACTIONS = Object.keys(ACTION_LABELS);
+
+const QUARANTINE_REASONS = [
+  'Breached',
+  'Compromised',
+  'Risky Geolocation',
+  'Phishing',
+  'Malware',
+  'Policy Violation',
+  'Other',
+];
 
 /* ── Utilities ─────────────────────────────────────────────────────────── */
 function esc(str) {
@@ -25,7 +36,12 @@ function setSpinner(btn, spinner, on) {
 
 function gatherActions() {
   return Array.from(document.querySelectorAll('input[type=checkbox]:checked'))
-    .map(cb => ({ username: cb.dataset.user, action: cb.dataset.action }));
+    .map(cb => {
+      const row = cb.closest('tr');
+      const reason  = row ? row.querySelector('.qr-reason')?.value  : '';
+      const comment = row ? row.querySelector('.qr-comment')?.value : '';
+      return { username: cb.dataset.user, action: cb.dataset.action, reason, comment };
+    });
 }
 
 function selectAllAction(action) {
@@ -113,12 +129,17 @@ function renderUserTable(users) {
       ? `<em class="text-muted">${esc(u.reason)}</em>`
       : '<em class="text-muted">Not found</em>';
 
-    const checkboxes = ACTIONS.map(a =>
-      `<td class="text-center action-cell">${found
-        ? `<input type="checkbox" class="form-check-input" data-user="${esc(u.username)}" data-action="${a}">`
-        : '<span class="text-muted">—</span>'
-      }</td>`
-    ).join('');
+    const checkboxes = ACTIONS.map(a => {
+      if (!found) return `<td class="text-center action-cell"><span class="text-muted">—</span></td>`;
+      // ad_disable only makes sense for enabled accounts; ad_enable only for disabled ones.
+      if (a === 'ad_disable' && u.ad_disabled) {
+        return `<td class="text-center action-cell"><span class="text-muted" title="Account already disabled">—</span></td>`;
+      }
+      if (a === 'ad_enable' && !u.ad_disabled) {
+        return `<td class="text-center action-cell"><span class="text-muted" title="Account is not disabled">—</span></td>`;
+      }
+      return `<td class="text-center action-cell"><input type="checkbox" class="form-check-input" data-user="${esc(u.username)}" data-action="${a}"></td>`;
+    }).join('');
 
     let displayCell;
     if (!found) {
@@ -144,8 +165,22 @@ function renderUserTable(users) {
       }
     }
 
+    const reasonOptions = QUARANTINE_REASONS.map(r =>
+      `<option value="${esc(r)}">${esc(r)}</option>`
+    ).join('');
+    const reasonCell = found
+      ? `<td>
+           <select class="form-select form-select-sm qr-reason mb-1">
+             <option value="">— select reason —</option>
+             ${reasonOptions}
+           </select>
+           <input type="text" class="form-control form-control-sm qr-comment" placeholder="Comment (optional)">
+         </td>`
+      : '<td class="text-muted text-center">—</td>';
+
     tr.innerHTML = `
       <td>${displayCell}</td>
+      ${reasonCell}
       ${checkboxes}
     `;
     tbody.appendChild(tr);
@@ -162,7 +197,10 @@ document.getElementById('executeBtn').addEventListener('click', () => {
   if (!actions.length) { alert('Select at least one action.'); return; }
 
   const lines = actions
-    .map(a => `• ${a.username}  →  ${ACTION_LABELS[a.action] || a.action}`)
+    .map(a => {
+      const meta = [a.reason, a.comment].filter(Boolean).join(' — ');
+      return `• ${a.username}  →  ${ACTION_LABELS[a.action] || a.action}${meta ? ` (${meta})` : ''}`;
+    })
     .join('\n');
 
   document.getElementById('confirmModalBody').innerHTML =
