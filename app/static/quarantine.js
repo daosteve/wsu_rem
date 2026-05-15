@@ -114,30 +114,38 @@ function renderUserTable(users) {
       : '<em class="text-muted">Not found</em>';
 
     const checkboxes = ACTIONS.map(a =>
-      `<td class="text-center" style="vertical-align:middle;">${found
-        ? `<input type="checkbox" class="form-check-input" style="width:1.6rem;height:1.6rem;cursor:pointer;border:2px solid #0d6efd;background-color:#e8f0fe;accent-color:#0d6efd;" data-user="${esc(u.username)}" data-action="${a}">`
+      `<td class="text-center action-cell">${found
+        ? `<input type="checkbox" class="form-check-input" data-user="${esc(u.username)}" data-action="${a}">`
         : '<span class="text-muted">—</span>'
       }</td>`
     ).join('');
 
-    let displayCell = found ? `<strong>${esc(u.display_name || '')}</strong>` : notFoundLabel;
-    if (found) {
-      if (u.ou)      displayCell += `<br><span class="text-muted small"><strong>OU:</strong> ${esc(u.ou)}</span>`;
-      if (u.created) displayCell += `<br><span class="text-muted small"><strong>Created:</strong> ${esc(u.created)}</span>`;
-      if (u.modified) displayCell += `<br><span class="text-muted small"><strong>Modified:</strong> ${esc(u.modified)}</span>`;
+    let displayCell;
+    if (!found) {
+      displayCell = notFoundLabel;
+    } else {
+      // Line 1: username · domain badge · AD status badge · OU
+      const domainPart = u.domain ? ` ${domainBadge(u.domain)}` : '';
+      const ouPart = u.ou ? ` <span class="badge bg-secondary">${esc(u.ou)}</span>` : '';
+      const displayNamePart = u.display_name ? ` (${esc(u.display_name)})` : '';
+      displayCell = `<span class="badge bg-dark font-monospace">${esc(u.username)}${displayNamePart}</span>${ouPart}${domainPart} ${adBadge}`;
+      // Line 2: created · modified
+      const createdPart = u.created ? `<strong>Created:</strong> ${esc(u.created)}` : '';
+      const modifiedPart = u.modified ? `<strong>Modified:</strong> ${esc(u.modified)}` : '';
+      const dateParts = [createdPart, modifiedPart].filter(Boolean).join(' &nbsp;·&nbsp; ');
+      if (dateParts) displayCell += `<br><span class="text-muted small">${dateParts}</span>`;
+      // Groups
       if (u.groups && u.groups.length) {
         displayCell += `<br><span class="text-muted small"><strong>Groups:</strong> ${u.groups.map(esc).join(', ')}</span>`;
       }
+      // GW last login
       if (u.gw_last_login) {
         displayCell += `<br><span class="text-muted small"><strong>Google Workspace Last Login:</strong> ${esc(u.gw_last_login)}</span>`;
       }
     }
 
     tr.innerHTML = `
-      <td class="font-monospace">${esc(u.username)}</td>
       <td>${displayCell}</td>
-      <td>${found ? domainBadge(u.domain) : '—'}</td>
-      <td>${adBadge}</td>
       ${checkboxes}
     `;
     tbody.appendChild(tr);
