@@ -44,21 +44,6 @@ function gatherActions() {
     });
 }
 
-function selectAllAction(action) {
-  document.querySelectorAll(`input[type=checkbox][data-action="${action}"]`)
-    .forEach(cb => { if (!cb.disabled) cb.checked = true; });
-}
-
-function clearAllActions() {
-  document.querySelectorAll('input[type=checkbox]').forEach(cb => cb.checked = false);
-}
-
-/* ── Select-all / clear buttons ────────────────────────────────────────── */
-document.querySelectorAll('[data-select-action]').forEach(btn => {
-  btn.addEventListener('click', () => selectAllAction(btn.dataset.selectAction));
-});
-document.getElementById('clearAllBtn').addEventListener('click', clearAllActions);
-
 /* ── Lookup ─────────────────────────────────────────────────────────────── */
 const MAX_USERNAMES = 20;
 
@@ -138,6 +123,9 @@ function renderUserTable(users) {
       if (a === 'ad_enable' && !u.ad_disabled) {
         return `<td class="text-center action-cell"><span class="text-muted" title="Account is not disabled">—</span></td>`;
       }
+      if (a === 'ad_enable' && !u.quarantined_by_us) {
+        return `<td class="text-center action-cell"><span class="text-muted" title="Not disabled by this system">—</span></td>`;
+      }
       return `<td class="text-center action-cell"><input type="checkbox" class="form-check-input" data-user="${esc(u.username)}" data-action="${a}"></td>`;
     }).join('');
 
@@ -163,6 +151,19 @@ function renderUserTable(users) {
       if (u.gw_last_login) {
         displayCell += `<br><span class="text-muted small"><strong>Google Workspace Last Login:</strong> ${esc(u.gw_last_login)}</span>`;
       }
+      // Entra MFA info
+      if (u.mfa_last_used || u.mfa_methods) {
+        let mfaLine = '<strong>Entra MFA:</strong> ';
+        if (u.mfa_last_used) {
+          mfaLine += `Last used: ${esc(u.mfa_last_used)}`;
+          if (u.mfa_last_method) mfaLine += ` via <em>${esc(u.mfa_last_method)}</em>`;
+        }
+        if (u.mfa_methods && u.mfa_methods.length) {
+          if (u.mfa_last_used) mfaLine += ' &nbsp;·&nbsp; ';
+          mfaLine += `Registered: ${u.mfa_methods.map(esc).join(', ')}`;
+        }
+        displayCell += `<br><span class="text-muted small">${mfaLine}</span>`;
+      }
     }
 
     const reasonOptions = QUARANTINE_REASONS.map(r =>
@@ -170,7 +171,7 @@ function renderUserTable(users) {
     ).join('');
     const reasonCell = found
       ? `<td>
-           <select class="form-select form-select-sm qr-reason mb-1">
+           <select class="form-select form-select-sm qr-reason mb-1" onchange="this.classList.remove('is-invalid')">
              <option value="">— select reason —</option>
              ${reasonOptions}
            </select>
@@ -195,6 +196,17 @@ const confirmModal = new bootstrap.Modal(document.getElementById('confirmModal')
 document.getElementById('executeBtn').addEventListener('click', () => {
   const actions = gatherActions();
   if (!actions.length) { alert('Select at least one action.'); return; }
+
+  // Require a quarantine reason whenever Disable AD is checked
+  let missingReason = false;
+  document.querySelectorAll('input[type=checkbox][data-action="ad_disable"]:checked').forEach(cb => {
+    const sel = cb.closest('tr')?.querySelector('.qr-reason');
+    if (sel && !sel.value) {
+      sel.classList.add('is-invalid');
+      missingReason = true;
+    }
+  });
+  if (missingReason) { alert('Please select a Quarantine Reason for every Disable AD action.'); return; }
 
   const lines = actions
     .map(a => {
@@ -239,11 +251,13 @@ function renderResults(results) {
   tbody.innerHTML = '';
   results.forEach(r => {
     const tr = document.createElement('tr');
-    tr.classList.add(r.result === 'success' ? 'table-success' : 'table-danger');
+    const rowClass = r.result === 'success' ? 'table-success' : r.result === 'warning' ? 'table-warning' : 'table-danger';
+    const badgeClass = r.result === 'success' ? 'success' : r.result === 'warning' ? 'warning text-dark' : 'danger';
+    tr.classList.add(rowClass);
     tr.innerHTML = `
       <td class="font-monospace">${esc(r.username)}</td>
       <td>${esc(ACTION_LABELS[r.action] || r.action)}</td>
-      <td><span class="badge bg-${r.result === 'success' ? 'success' : 'danger'}">${esc(r.result)}</span></td>
+      <td><span class="badge bg-${badgeClass}">${esc(r.result)}</span></td>
       <td class="small">${esc(r.detail || '')}</td>
     `;
     tbody.appendChild(tr);

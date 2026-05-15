@@ -19,3 +19,11 @@ td.td-detail          { max-width: 220px; }
   border-color: #0d6efd;
 }
 #userTable td.action-cell { vertical-align: middle; }
+
+/* Quarantine Reason column – wider on large-enough screens */
+@media (min-width: 992px) {
+  #userTable th:nth-child(2),
+  #userTable td:nth-child(2) {
+    min-width: 200px;
+  }
+}

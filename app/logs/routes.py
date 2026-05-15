@@ -6,7 +6,7 @@ from flask import render_template, request, jsonify, abort, current_app
 from flask_login import login_required, current_user
 
 from app.logs import bp
-from app.models import OperationLog
+from app.models import OperationLog, QuarantineRecord
 from app import db
 from app.services import active_directory, google_workspace
 
@@ -96,11 +96,21 @@ def search():
         for r in pagination.items
     ]
 
+    # Include which of the visible usernames were disabled by this system
+    page_usernames = {r['target_username'] for r in rows}
+    quarantined_users = [
+        rec.username
+        for rec in QuarantineRecord.query.filter(
+            QuarantineRecord.username.in_(page_usernames)
+        ).all()
+    ]
+
     return jsonify({
         'rows': rows,
         'total': pagination.total,
         'pages': pagination.pages,
         'page': page,
+        'quarantined_users': quarantined_users,
     })
 
 
@@ -127,10 +137,22 @@ def remediate():
         if len(password) > 256:
             return jsonify({'error': 'Password too long.'}), 400
         kwargs['new_password'] = password
+    if action == 'ad_enable':
+        rec = QuarantineRecord.query.filter_by(username=username).first()
+        if not rec:
+            return jsonify({'result': 'error', 'detail': 'Account was not disabled by this system.'}), 400
+        kwargs['original_dn'] = rec.original_dn
+        kwargs['operator'] = current_user.username
     try:
         result, detail = fn(current_app.config, username, **kwargs)
     except Exception as exc:
         result, detail = 'error', str(exc)
+
+    # Remove the quarantine record on a successful or warning re-enable
+    if action == 'ad_enable' and result in ('success', 'warning'):
+        rec = QuarantineRecord.query.filter_by(username=username).first()
+        if rec:
+            db.session.delete(rec)
 
     entry = OperationLog(
         operator=current_user.username,

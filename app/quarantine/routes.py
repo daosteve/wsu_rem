@@ -79,6 +79,17 @@ def lookup():
 
     results = active_directory.lookup_users(current_app.config, usernames)
 
+    # Mark which found users were disabled by this system
+    quarantined = {
+        r.username
+        for r in QuarantineRecord.query.filter(
+            QuarantineRecord.username.in_(usernames)
+        ).all()
+    }
+    for user in results:
+        if user.get('found'):
+            user['quarantined_by_us'] = user['username'] in quarantined
+
     # Enrich found users with GW last login (best-effort; never blocks the response)
     gw_configured = not google_workspace._not_configured(current_app.config)
     if gw_configured:
@@ -87,6 +98,13 @@ def lookup():
                 user['gw_last_login'] = google_workspace.get_last_login(
                     current_app.config, user['username']
                 )
+
+    # Enrich found users with Entra MFA info (best-effort; never blocks the response)
+    entra_configured = not entra_id._not_configured(current_app.config)
+    if entra_configured:
+        for user in results:
+            if user.get('found'):
+                user.update(entra_id.get_mfa_info(current_app.config, user['username']))
 
     return jsonify({'users': results})
 
@@ -126,6 +144,9 @@ def execute():
 
         try:
             if action == 'ad_disable':
+                if not reason:
+                    results.append({'username': username, 'action': action, 'result': 'error', 'detail': 'Quarantine reason is required.'})
+                    continue
                 res = active_directory.disable_user(cfg, username, reason=reason, comment=comment)
                 result, detail = res[0], res[1]
                 original_dn = res[2] if len(res) > 2 else None
@@ -138,13 +159,15 @@ def execute():
                         qr_to_add.append(QuarantineRecord(username=username, original_dn=original_dn))
             elif action == 'ad_enable':
                 rec = QuarantineRecord.query.filter_by(username=username).first()
-                original_dn = rec.original_dn if rec else None
+                if not rec:
+                    results.append({'username': username, 'action': action, 'result': 'error', 'detail': 'Account was not disabled by this system.'})
+                    continue
                 result, detail = active_directory.enable_user(
                     cfg, username,
-                    original_dn=original_dn,
+                    original_dn=rec.original_dn,
                     operator=current_user.username,
                 )
-                if result == 'success' and rec:
+                if result in ('success', 'warning'):
                     qr_to_delete.append(rec)
             elif action == 'ad_reset_password':
                 result, detail = active_directory.reset_password(cfg, username)

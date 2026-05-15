@@ -1,6 +1,7 @@
 'use strict';
 
 let currentPage = 1;
+let quarantinedUsers = new Set();  // usernames disabled by this system, from latest search
 
 document.getElementById('filterForm').addEventListener('submit', e => {
   e.preventDefault();
@@ -16,12 +17,14 @@ document.getElementById('logTableBody').addEventListener('click', e => {
   const cell = e.target.closest('td.js-target-username');
   if (!cell) return;
   const username = cell.dataset.username;
+  const canEnable = quarantinedUsers.has(username);
   document.getElementById('remediateUsername').textContent = username;
   document.getElementById('remediateResult').innerHTML = '';
   document.getElementById('pwdSection').classList.add('d-none');
   document.getElementById('newPassword').value = '';
   document.getElementById('confirmPassword').value = '';
   document.getElementById('btnEnable').disabled      = false;
+  document.getElementById('btnEnable').classList.toggle('d-none', !canEnable);
   document.getElementById('btnResetPwd').disabled    = false;
   document.getElementById('btnGwUnsuspend').disabled = false;
   bootstrap.Modal.getOrCreateInstance(document.getElementById('remediateModal')).show();
@@ -42,10 +45,11 @@ function postRemediate(username, action, password) {
 }
 
 function showRemediateResult(data) {
-  const ok = data.result === 'success';
+  const alertClass = data.result === 'success' ? 'success' : data.result === 'warning' ? 'warning' : 'danger';
+  const label      = data.result === 'success' ? 'Success' : data.result === 'warning' ? 'Warning' : 'Error';
   document.getElementById('remediateResult').innerHTML =
-    `<div class="alert alert-${ok ? 'success' : 'danger'} py-2 mb-0">
-      <strong>${ok ? 'Success' : 'Error'}:</strong> ${esc(data.detail || data.error || '')}
+    `<div class="alert alert-${alertClass} py-2 mb-0">
+      <strong>${label}:</strong> ${esc(data.detail || data.error || '')}
     </div>`;
 }
 
@@ -113,6 +117,7 @@ function loadLogs(page) {
 }
 
 function renderLogs(data) {
+  quarantinedUsers = new Set(data.quarantined_users || []);
   const tbody = document.getElementById('logTableBody');
   tbody.innerHTML = '';
 
