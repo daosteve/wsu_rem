@@ -147,7 +147,7 @@ def execute():
                 if not reason:
                     results.append({'username': username, 'action': action, 'result': 'error', 'detail': 'Quarantine reason is required.'})
                     continue
-                res = active_directory.disable_user(cfg, username, reason=reason, comment=comment)
+                res = active_directory.disable_user(cfg, username, reason=reason, comment=comment, operator=current_user.username)
                 result, detail = res[0], res[1]
                 original_dn = res[2] if len(res) > 2 else None
                 if result == 'success' and original_dn:

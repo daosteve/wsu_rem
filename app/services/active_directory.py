@@ -207,7 +207,7 @@ def lookup_users(cfg: dict, usernames: list) -> list:
     return results
 
 
-def disable_user(cfg: dict, username: str, reason: str = '', comment: str = '') -> tuple:
+def disable_user(cfg: dict, username: str, reason: str = '', comment: str = '', operator: str = '') -> tuple:
     """Disable an AD account, set its Description, and move it to the Disabled OU.
 
     Returns a 3-tuple: (result, detail, original_dn).
@@ -229,10 +229,12 @@ def disable_user(cfg: dict, username: str, reason: str = '', comment: str = '') 
         # Build the Description value
         desc_parts = []
         if reason:
-            desc_parts.append(f'Quarantine Reason: {reason}')
+            desc_parts.append(f'Disabled: {reason}')
         if comment:
-            desc_parts.append(f'Comment: {comment}')
-        description = ' | '.join(desc_parts) if desc_parts else 'Quarantined'
+            desc_parts.append(f'{comment}')
+        if operator:
+            desc_parts.append(f'by {operator}')
+        description = ' | '.join(desc_parts) if desc_parts else 'Disabled'
 
         wconn = _write_conn(cfg, dn)
 
