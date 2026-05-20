@@ -18,6 +18,7 @@ import requests
 from datetime import datetime
 
 _GRAPH_ENDPOINT = 'https://graph.microsoft.com/v1.0'
+_GRAPH_BETA = 'https://graph.microsoft.com/beta'
 _SCOPES = ['https://graph.microsoft.com/.default']
 
 # Human-readable labels for authentication method odata types
@@ -37,7 +38,9 @@ _PASSWORD_METHOD = '#microsoft.graph.passwordAuthenticationMethod'
 def _fmt_dt(iso_str: str) -> str:
     """Format a Graph API ISO 8601 UTC timestamp to a readable string."""
     try:
-        dt = datetime.strptime(iso_str, '%Y-%m-%dT%H:%M:%SZ')
+        # Strip sub-second precision and trailing Z before parsing
+        s = iso_str.rstrip('Z').split('.')[0]
+        dt = datetime.strptime(s, '%Y-%m-%dT%H:%M:%S')
         return dt.strftime('%Y-%m-%d %H:%M UTC')
     except (ValueError, TypeError):
         return iso_str
@@ -122,7 +125,9 @@ def get_mfa_info(cfg: dict, username: str) -> dict:
       • AuditLog.Read.All                  – for last MFA sign-in log
 
     Returns a dict with zero or more of:
-      mfa_methods    – list of registered non-password method names
+      mfa_methods    – list of registered non-password methods, each a dict
+                         with 'name', and either 'registered' (createdDateTime)
+                         or 'last_used' (lastUsedDateTime) when available
       mfa_last_used  – formatted UTC timestamp of the most recent MFA sign-in
       mfa_last_method – authentication method used in that sign-in
 
@@ -137,13 +142,16 @@ def get_mfa_info(cfg: dict, username: str) -> dict:
         result = {}
 
         # --- Registered authentication methods ---
+        # Use the beta endpoint: it exposes createdDateTime for most types and
+        # lastUsedDateTime for phone methods (which lack createdDateTime).
         r = requests.get(
-            f'{_GRAPH_ENDPOINT}/users/{upn}/authentication/methods',
+            f'{_GRAPH_BETA}/users/{upn}/authentication/methods',
             headers=headers,
             timeout=10,
         )
         if r.status_code == 200:
             methods = []
+            seen_names: set[str] = set()
             for m in r.json().get('value', []):
                 odata_type = m.get('@odata.type', '')
                 if odata_type == _PASSWORD_METHOD:
@@ -153,8 +161,15 @@ def get_mfa_info(cfg: dict, username: str) -> dict:
                     phone_type = m.get('phoneType', '')
                     if phone_type and phone_type != 'mobile':
                         label = f'Phone ({phone_type})'
-                if label not in methods:
-                    methods.append(label)
+                if label in seen_names:
+                    continue
+                seen_names.add(label)
+                entry: dict = {'name': label}
+                if m.get('createdDateTime'):
+                    entry['registered'] = _fmt_dt(m['createdDateTime'])
+                elif m.get('lastUsedDateTime'):
+                    entry['last_used'] = _fmt_dt(m['lastUsedDateTime'])
+                methods.append(entry)
             if methods:
                 result['mfa_methods'] = methods
 

@@ -160,7 +160,15 @@ function renderUserTable(users) {
         }
         if (u.mfa_methods && u.mfa_methods.length) {
           if (u.mfa_last_used) mfaLine += ' &nbsp;·&nbsp; ';
-          mfaLine += `Registered: ${u.mfa_methods.map(esc).join(', ')}`;
+          mfaLine += 'Registered: ' + u.mfa_methods.map(m => {
+            let s = esc(m.name || m);
+            if (m.registered) {
+              s += ` <span class="text-muted fst-italic">(registered: ${esc(m.registered)})</span>`;
+            } else if (m.last_used) {
+              s += ` <span class="text-muted fst-italic">(last used: ${esc(m.last_used)})</span>`;
+            }
+            return s;
+          }).join(', ');
         }
         displayCell += `<br><span class="text-muted small">${mfaLine}</span>`;
       }
