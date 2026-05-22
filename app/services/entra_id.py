@@ -15,7 +15,7 @@ One-time setup
 
 import msal
 import requests
-from datetime import datetime
+from datetime import datetime, timedelta
 
 _GRAPH_ENDPOINT = 'https://graph.microsoft.com/v1.0'
 _GRAPH_BETA = 'https://graph.microsoft.com/beta'
@@ -122,14 +122,10 @@ def get_mfa_info(cfg: dict, username: str) -> dict:
 
     Requires these additional Graph application permissions (admin consent needed):
       • UserAuthenticationMethod.Read.All  – for registered methods
-      • AuditLog.Read.All                  – for last MFA sign-in log
 
     Returns a dict with zero or more of:
       mfa_methods    – list of registered non-password methods, each a dict
-                         with 'name', and either 'registered' (createdDateTime)
-                         or 'last_used' (lastUsedDateTime) when available
-      mfa_last_used  – formatted UTC timestamp of the most recent MFA sign-in
-      mfa_last_method – authentication method used in that sign-in
+                         with 'name' and 'registered' (createdDateTime) when available
 
     Returns {} silently on any error or if Entra is not configured.
     """
@@ -167,42 +163,59 @@ def get_mfa_info(cfg: dict, username: str) -> dict:
                 entry: dict = {'name': label}
                 if m.get('createdDateTime'):
                     entry['registered'] = _fmt_dt(m['createdDateTime'])
-                elif m.get('lastUsedDateTime'):
-                    entry['last_used'] = _fmt_dt(m['lastUsedDateTime'])
                 methods.append(entry)
             if methods:
                 result['mfa_methods'] = methods
 
-        # --- Most recent MFA sign-in (requires AuditLog.Read.All) ---
-        r2 = requests.get(
-            f'{_GRAPH_ENDPOINT}/auditLogs/signIns',
-            headers=headers,
-            params={
-                '$filter': (
-                    f"userPrincipalName eq '{upn}'"
-                    " and authenticationRequirement eq 'multiFactorAuthentication'"
-                ),
-                '$top': '1',
-                '$select': 'createdDateTime,authenticationDetails',
-            },
-            timeout=10,
-        )
-        if r2.status_code == 200:
-            entries = r2.json().get('value', [])
-            if entries:
-                entry = entries[0]
-                dt = entry.get('createdDateTime', '')
-                if dt:
-                    result['mfa_last_used'] = _fmt_dt(dt)
-                # Find the secondary (MFA) authentication step
-                for detail in entry.get('authenticationDetails', []):
-                    if (detail.get('authenticationStepRequirement') == 'secondaryAuthentication'
-                            and detail.get('succeeded')):
-                        method = detail.get('authenticationMethod', '')
-                        if method:
-                            result['mfa_last_method'] = method
-                        break
-
         return result
     except Exception:
         return {}
+
+
+def get_audit_activity(cfg: dict, username: str) -> list:
+    """
+    Return Entra ID audit entries for 'User started security info registration'
+    in the last 30 days where the user is the target.
+
+    Requires AuditLog.Read.All application permission (admin consent needed).
+    Returns a list of dicts with 'date', 'result', 'initiated_by'.
+    Returns [] silently on any error or if Entra is not configured.
+    """
+    if _not_configured(cfg):
+        return []
+    try:
+        token = _get_token(cfg)
+        headers = {'Authorization': f'Bearer {token}'}
+        upn = _resolve_upn(cfg, username)
+        since = (datetime.utcnow() - timedelta(days=30)).strftime('%Y-%m-%dT%H:%M:%SZ')
+        r = requests.get(
+            f'{_GRAPH_ENDPOINT}/auditLogs/directoryAudits',
+            headers=headers,
+            params={
+                '$filter': (
+                    f"targetResources/any(t: t/userPrincipalName eq '{upn}')"
+                    " and activityDisplayName eq 'User started security info registration'"
+                    f" and activityDateTime ge {since}"
+                ),
+                '$top': '5',
+                '$orderby': 'activityDateTime desc',
+                '$select': 'activityDateTime,result,initiatedBy',
+            },
+            timeout=10,
+        )
+        if r.status_code != 200:
+            return []
+        entries = []
+        for item in r.json().get('value', []):
+            dt = _fmt_dt(item.get('activityDateTime', ''))
+            res = item.get('result', '')
+            initiated_by = ''
+            ib = item.get('initiatedBy', {})
+            if ib.get('user'):
+                initiated_by = ib['user'].get('displayName') or ib['user'].get('userPrincipalName', '')
+            elif ib.get('app'):
+                initiated_by = ib['app'].get('displayName', '')
+            entries.append({'date': dt, 'result': res, 'initiated_by': initiated_by})
+        return entries
+    except Exception:
+        return []

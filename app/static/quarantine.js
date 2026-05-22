@@ -7,6 +7,7 @@ const ACTION_LABELS = {
   ad_enable:             'Enable Active Directory account',
   ad_reset_password:     'Reset Active Directory password',
   gw_suspend:            'Suspend Google Workspace',
+  gw_unsuspend:          'Unsuspend Google Workspace',
   gw_reset_cookies:      'Reset Google Workspace sign-in cookies',
   entra_revoke_sessions: 'Revoke Entra ID sessions',
 };
@@ -152,25 +153,26 @@ function renderUserTable(users) {
         displayCell += `<br><span class="text-muted small"><strong>Google Workspace Last Login:</strong> ${esc(u.gw_last_login)}</span>`;
       }
       // Entra MFA info
-      if (u.mfa_last_used || u.mfa_methods) {
-        let mfaLine = '<strong>Entra MFA:</strong> ';
-        if (u.mfa_last_used) {
-          mfaLine += `Last used: ${esc(u.mfa_last_used)}`;
-          if (u.mfa_last_method) mfaLine += ` via <em>${esc(u.mfa_last_method)}</em>`;
-        }
-        if (u.mfa_methods && u.mfa_methods.length) {
-          if (u.mfa_last_used) mfaLine += ' &nbsp;·&nbsp; ';
-          mfaLine += 'Registered: ' + u.mfa_methods.map(m => {
-            let s = esc(m.name || m);
-            if (m.registered) {
-              s += ` <span class="text-muted fst-italic">(registered: ${esc(m.registered)})</span>`;
-            } else if (m.last_used) {
-              s += ` <span class="text-muted fst-italic">(last used: ${esc(m.last_used)})</span>`;
-            }
-            return s;
-          }).join(', ');
-        }
+      if (u.mfa_methods && u.mfa_methods.length) {
+        let mfaLine = '<strong>Entra MFA:</strong> Registered: ' + u.mfa_methods.map(m => {
+          let s = esc(m.name || m);
+          if (m.registered) {
+            s += ` <span class="text-muted fst-italic">(registered: ${esc(m.registered)})</span>`;
+          }
+          return s;
+        }).join(', ');
         displayCell += `<br><span class="text-muted small">${mfaLine}</span>`;
+      }
+      // Entra recent audit activity
+      if (u.entra_audit && u.entra_audit.length) {
+        const rows = u.entra_audit.map(a => {
+          const badge = a.result
+            ? ` <span class="badge bg-${a.result === 'success' ? 'success' : 'danger'} bg-opacity-75">${esc(a.result)}</span>`
+            : '';
+          const actor = a.initiated_by ? ` <span class="fst-italic">by ${esc(a.initiated_by)}</span>` : '';
+          return `${esc(a.date)}${badge}${actor}`;
+        }).join('<br>');
+        displayCell += `<br><span class="text-muted small"><strong>Entra Security Info Registration (last 30 days):</strong><br>${rows}</span>`;
       }
     }
 

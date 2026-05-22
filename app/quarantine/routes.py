@@ -18,6 +18,7 @@ VALID_ACTIONS = frozenset({
     'ad_enable',
     'ad_reset_password',
     'gw_suspend',
+    'gw_unsuspend',
     'gw_reset_cookies',
     'entra_revoke_sessions',
 })
@@ -27,6 +28,7 @@ SYSTEM_MAP = {
     'ad_enable': 'AD',
     'ad_reset_password': 'AD',
     'gw_suspend': 'GW',
+    'gw_unsuspend': 'GW',
     'gw_reset_cookies': 'GW',
     'entra_revoke_sessions': 'Entra',
 }
@@ -99,12 +101,15 @@ def lookup():
                     current_app.config, user['username']
                 )
 
-    # Enrich found users with Entra MFA info (best-effort; never blocks the response)
+    # Enrich found users with Entra MFA info and audit activity (best-effort; never blocks the response)
     entra_configured = not entra_id._not_configured(current_app.config)
     if entra_configured:
         for user in results:
             if user.get('found'):
                 user.update(entra_id.get_mfa_info(current_app.config, user['username']))
+                user['entra_audit'] = entra_id.get_audit_activity(
+                    current_app.config, user['username']
+                )
 
     return jsonify({'users': results})
 
@@ -173,6 +178,8 @@ def execute():
                 result, detail = active_directory.reset_password(cfg, username)
             elif action == 'gw_suspend':
                 result, detail = google_workspace.suspend_user(cfg, username)
+            elif action == 'gw_unsuspend':
+                result, detail = google_workspace.unsuspend_user(cfg, username)
             elif action == 'gw_reset_cookies':
                 result, detail = google_workspace.reset_sign_in_cookies(cfg, username)
             elif action == 'entra_revoke_sessions':
