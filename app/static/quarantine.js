@@ -30,6 +30,29 @@ function esc(str) {
     .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 }
 
+/**
+ * Convert a UTC date string from the server to a local-time display string.
+ * Accepts "YYYY-MM-DD HH:MM UTC" → "May 22, 2026 @ 5:55PM"
+ * Accepts "YYYY-MM-DD"           → "May 22, 2026"
+ */
+function fmtLocalTime(utcStr) {
+  if (!utcStr) return '';
+  let m = utcStr.match(/^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2})/);
+  if (m) {
+    const d = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5]));
+    const date = d.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+    const time = d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })
+                  .replace(/\s+(AM|PM)$/i, '$1');
+    return `${date} @ ${time}`;
+  }
+  m = utcStr.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (m) {
+    const d = new Date(+m[1], +m[2] - 1, +m[3]);
+    return d.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+  }
+  return utcStr;
+}
+
 function setSpinner(btn, spinner, on) {
   btn.disabled = on;
   spinner.classList.toggle('d-none', !on);
@@ -140,8 +163,8 @@ function renderUserTable(users) {
       const displayNamePart = u.display_name ? ` (${esc(u.display_name)})` : '';
       displayCell = `<span class="badge bg-dark font-monospace">${esc(u.username)}${displayNamePart}</span>${ouPart}${domainPart} ${adBadge}`;
       // Line 2: created · modified
-      const createdPart = u.created ? `<strong>Created:</strong> ${esc(u.created)}` : '';
-      const modifiedPart = u.modified ? `<strong>Modified:</strong> ${esc(u.modified)}` : '';
+      const createdPart = u.created ? `<strong>Created:</strong> ${fmtLocalTime(u.created)}` : '';
+      const modifiedPart = u.modified ? `<strong>Modified:</strong> ${fmtLocalTime(u.modified)}` : '';
       const dateParts = [createdPart, modifiedPart].filter(Boolean).join(' &nbsp;·&nbsp; ');
       if (dateParts) displayCell += `<br><span class="text-muted small">${dateParts}</span>`;
       // Groups
@@ -150,14 +173,14 @@ function renderUserTable(users) {
       }
       // GW last login
       if (u.gw_last_login) {
-        displayCell += `<br><span class="text-muted small"><strong>Google Workspace Last Login:</strong> ${esc(u.gw_last_login)}</span>`;
+        displayCell += `<br><span class="text-muted small"><strong>Google Workspace Last Login:</strong> ${fmtLocalTime(u.gw_last_login)}</span>`;
       }
       // Entra MFA info
       if (u.mfa_methods && u.mfa_methods.length) {
         let mfaLine = '<strong>Entra MFA:</strong> Registered: ' + u.mfa_methods.map(m => {
           let s = esc(m.name || m);
           if (m.registered) {
-            s += ` <span class="text-muted fst-italic">(registered: ${esc(m.registered)})</span>`;
+            s += ` <span class="text-muted fst-italic">(registered: ${fmtLocalTime(m.registered)})</span>`;
           }
           return s;
         }).join(', ');
@@ -165,14 +188,7 @@ function renderUserTable(users) {
       }
       // Entra recent audit activity
       if (u.entra_audit && u.entra_audit.length) {
-        const rows = u.entra_audit.map(a => {
-          const badge = a.result
-            ? ` <span class="badge bg-${a.result === 'success' ? 'success' : 'danger'} bg-opacity-75">${esc(a.result)}</span>`
-            : '';
-          const actor = a.initiated_by ? ` <span class="fst-italic">by ${esc(a.initiated_by)}</span>` : '';
-          return `${esc(a.date)}${badge}${actor}`;
-        }).join('<br>');
-        displayCell += `<br><span class="text-muted small"><strong>Entra Security Info Registration (last 30 days):</strong><br>${rows}</span>`;
+        displayCell += `<br><span class="text-muted small"><strong>Last MFA Registration:</strong> ${fmtLocalTime(u.entra_audit[0].date)}</span>`;
       }
     }
 
