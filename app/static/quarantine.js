@@ -23,6 +23,9 @@ const QUARANTINE_REASONS = [
   'Policy Violation',
   'Other',
 ];
+const REASON_OPTIONS_HTML = QUARANTINE_REASONS.map(r =>
+  `<option value="${esc(r)}">${esc(r)}</option>`
+).join('');
 
 /* ── Utilities ─────────────────────────────────────────────────────────── */
 function esc(str) {
@@ -151,6 +154,18 @@ function renderUserTable(users) {
       if (a === 'ad_enable' && !u.quarantined_by_us) {
         return `<td class="text-center action-cell"><span class="text-muted" title="Not disabled by this system">—</span></td>`;
       }
+      if (a === 'ad_disable') {
+        return `<td class="text-center action-cell">
+          <input type="checkbox" class="form-check-input" data-user="${esc(u.username)}" data-action="${a}">
+          <div class="qr-inline mt-1 d-none text-start">
+            <select class="form-select form-select-sm qr-reason mt-1" onchange="this.classList.remove('is-invalid')">
+              <option value="">— reason —</option>
+              ${REASON_OPTIONS_HTML}
+            </select>
+            <input type="text" class="form-control form-control-sm qr-comment mt-1" placeholder="Comment (optional)">
+          </div>
+        </td>`;
+      }
       return `<td class="text-center action-cell"><input type="checkbox" class="form-check-input" data-user="${esc(u.username)}" data-action="${a}"></td>`;
     }).join('');
 
@@ -193,22 +208,8 @@ function renderUserTable(users) {
       }
     }
 
-    const reasonOptions = QUARANTINE_REASONS.map(r =>
-      `<option value="${esc(r)}">${esc(r)}</option>`
-    ).join('');
-    const reasonCell = found
-      ? `<td>
-           <select class="form-select form-select-sm qr-reason mb-1" onchange="this.classList.remove('is-invalid')">
-             <option value="">— select reason —</option>
-             ${reasonOptions}
-           </select>
-           <input type="text" class="form-control form-control-sm qr-comment" placeholder="Comment (optional)">
-         </td>`
-      : '<td class="text-muted text-center">—</td>';
-
     tr.innerHTML = `
       <td>${displayCell}</td>
-      ${reasonCell}
       ${checkboxes}
     `;
     tbody.appendChild(tr);
@@ -216,6 +217,13 @@ function renderUserTable(users) {
   document.getElementById('userTableSection').classList.remove('d-none');
   document.getElementById('resultsSection').classList.add('d-none');
 }
+
+/* ── Inline reason form toggle ─────────────────────────────────────────── */
+document.getElementById('userTableBody').addEventListener('change', e => {
+  if (e.target.matches('input[data-action="ad_disable"]')) {
+    e.target.closest('td').querySelector('.qr-inline').classList.toggle('d-none', !e.target.checked);
+  }
+});
 
 /* ── Execute (confirmation modal) ───────────────────────────────────────── */
 const confirmModal = new bootstrap.Modal(document.getElementById('confirmModal'));
