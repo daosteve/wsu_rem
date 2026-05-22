@@ -116,6 +116,67 @@ def revoke_sessions(cfg: dict, username: str) -> tuple:
         return 'error', str(exc)
 
 
+def require_mfa_reregistration(cfg: dict, username: str) -> tuple:
+    """
+    Delete all registered MFA authentication methods for a user,
+    forcing them to re-register on next sign-in.
+
+    Requires UserAuthenticationMethod.ReadWrite.All (admin consent).
+    """
+    if _not_configured(cfg):
+        return 'error', 'Entra ID is not configured (see .env.example)'
+
+    # Map odata types to their specific REST collection path under /authentication/
+    _DELETE_PATHS = {
+        '#microsoft.graph.microsoftAuthenticatorAuthenticationMethod': 'microsoftAuthenticatorMethods',
+        '#microsoft.graph.phoneAuthenticationMethod':                  'phoneMethods',
+        '#microsoft.graph.fido2AuthenticationMethod':                  'fido2Methods',
+        '#microsoft.graph.softwareOathAuthenticationMethod':           'softwareOathMethods',
+        '#microsoft.graph.emailAuthenticationMethod':                  'emailMethods',
+        '#microsoft.graph.temporaryAccessPassAuthenticationMethod':    'temporaryAccessPassMethods',
+    }
+
+    try:
+        token = _get_token(cfg)
+        headers = {'Authorization': f'Bearer {token}'}
+        upn = _resolve_upn(cfg, username)
+
+        r = requests.get(
+            f'{_GRAPH_BETA}/users/{upn}/authentication/methods',
+            headers=headers,
+            timeout=10,
+        )
+        if r.status_code != 200:
+            return 'error', f'Graph API {r.status_code}: {r.text[:200]}'
+
+        deleted, errors = 0, []
+        for m in r.json().get('value', []):
+            odata_type = m.get('@odata.type', '')
+            if odata_type == _PASSWORD_METHOD:
+                continue
+            path = _DELETE_PATHS.get(odata_type)
+            method_id = m.get('id')
+            if not path or not method_id:
+                continue
+            del_resp = requests.delete(
+                f'{_GRAPH_BETA}/users/{upn}/authentication/{path}/{method_id}',
+                headers=headers,
+                timeout=10,
+            )
+            if del_resp.status_code in (200, 204):
+                deleted += 1
+            else:
+                errors.append(f'{path}: HTTP {del_resp.status_code}')
+
+        if errors:
+            return 'warning', f'Deleted {deleted} method(s); errors: {", ".join(errors)}'
+        if deleted == 0:
+            return 'warning', 'No MFA methods found to delete'
+        return 'success', f'Deleted {deleted} MFA method(s); user must re-register on next sign-in'
+    except Exception as exc:
+        return 'error', str(exc)
+
+
 def get_mfa_info(cfg: dict, username: str) -> dict:
     """
     Return MFA registration and last-used details for a user.

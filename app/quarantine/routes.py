@@ -21,6 +21,7 @@ VALID_ACTIONS = frozenset({
     'gw_unsuspend',
     'gw_reset_cookies',
     'entra_revoke_sessions',
+    'entra_require_mfa_reregister',
 })
 
 SYSTEM_MAP = {
@@ -30,7 +31,8 @@ SYSTEM_MAP = {
     'gw_suspend': 'GW',
     'gw_unsuspend': 'GW',
     'gw_reset_cookies': 'GW',
-    'entra_revoke_sessions': 'Entra',
+    'entra_revoke_sessions':          'Entra',
+    'entra_require_mfa_reregister':    'Entra',
 }
 
 
@@ -184,6 +186,8 @@ def execute():
                 result, detail = google_workspace.reset_sign_in_cookies(cfg, username)
             elif action == 'entra_revoke_sessions':
                 result, detail = entra_id.revoke_sessions(cfg, username)
+            elif action == 'entra_require_mfa_reregister':
+                result, detail = entra_id.require_mfa_reregistration(cfg, username)
         except Exception as exc:
             result, detail = 'error', str(exc)
 

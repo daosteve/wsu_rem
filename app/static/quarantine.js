@@ -9,7 +9,8 @@ const ACTION_LABELS = {
   gw_suspend:            'Suspend Google Workspace',
   gw_unsuspend:          'Unsuspend Google Workspace',
   gw_reset_cookies:      'Reset Google Workspace sign-in cookies',
-  entra_revoke_sessions: 'Revoke Entra ID sessions',
+  entra_revoke_sessions:          'Revoke Entra ID sessions',
+  entra_require_mfa_reregister:    'Require re-register MFA',
 };
 const ACTIONS = Object.keys(ACTION_LABELS);
 
