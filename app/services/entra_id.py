@@ -235,8 +235,11 @@ def get_mfa_info(cfg: dict, username: str) -> dict:
 
 def get_audit_activity(cfg: dict, username: str) -> list:
     """
-    Return Entra ID audit entries for 'User started security info registration'
+    Return Entra ID audit entries for MFA registration events
     in the last 30 days where the user is the target.
+
+    Captures both 'User registered security info' (completion) and
+    'User started security info registration' (initiation).
 
     Requires AuditLog.Read.All application permission (admin consent needed).
     Returns a list of dicts with 'date', 'result', 'initiated_by'.
@@ -255,7 +258,8 @@ def get_audit_activity(cfg: dict, username: str) -> list:
             params={
                 '$filter': (
                     f"targetResources/any(t: t/userPrincipalName eq '{upn}')"
-                    " and activityDisplayName eq 'User started security info registration'"
+                    " and (activityDisplayName eq 'User registered security info'"
+                    " or activityDisplayName eq 'User started security info registration')"
                     f" and activityDateTime ge {since}"
                 ),
                 '$top': '5',
