@@ -14,6 +14,9 @@ const ACTION_LABELS = {
 };
 const ACTIONS = Object.keys(ACTION_LABELS);
 
+// Actions that do NOT require a quarantine reason
+const ACTIONS_NO_REASON = new Set(['ad_enable', 'gw_unsuspend']);
+
 const QUARANTINE_REASONS = [
   'Breached',
   'Compromised',
@@ -154,18 +157,6 @@ function renderUserTable(users) {
       if (a === 'ad_enable' && !u.quarantined_by_us) {
         return `<td class="text-center action-cell"><span class="text-muted" title="Not disabled by this system">—</span></td>`;
       }
-      if (a === 'ad_disable') {
-        return `<td class="text-center action-cell">
-          <input type="checkbox" class="form-check-input" data-user="${esc(u.username)}" data-action="${a}">
-          <div class="qr-inline mt-1 d-none text-start">
-            <select class="form-select form-select-sm qr-reason mt-1" onchange="this.classList.remove('is-invalid')">
-              <option value="">— reason —</option>
-              ${REASON_OPTIONS_HTML}
-            </select>
-            <input type="text" class="form-control form-control-sm qr-comment mt-1" placeholder="Comment (optional)">
-          </div>
-        </td>`;
-      }
       return `<td class="text-center action-cell"><input type="checkbox" class="form-check-input" data-user="${esc(u.username)}" data-action="${a}"></td>`;
     }).join('');
 
@@ -206,6 +197,14 @@ function renderUserTable(users) {
       if (u.entra_audit && u.entra_audit.length) {
         displayCell += `<br><span class="text-muted small"><strong>Last MFA Registration:</strong> ${fmtLocalTime(u.entra_audit[0].date)}</span>`;
       }
+      // Shared reason/comment (shown when any non-exempt action is checked)
+      displayCell += `<div class="qr-inline mt-2 d-none">
+        <select class="form-select form-select-sm qr-reason" onchange="this.classList.remove('is-invalid')">
+          <option value="">— reason —</option>
+          ${REASON_OPTIONS_HTML}
+        </select>
+        <input type="text" class="form-control form-control-sm qr-comment mt-1" placeholder="Comment (optional)">
+      </div>`;
     }
 
     tr.innerHTML = `
@@ -220,9 +219,19 @@ function renderUserTable(users) {
 
 /* ── Inline reason form toggle ─────────────────────────────────────────── */
 document.getElementById('userTableBody').addEventListener('change', e => {
-  if (e.target.matches('input[data-action="ad_disable"]')) {
-    e.target.closest('td').querySelector('.qr-inline').classList.toggle('d-none', !e.target.checked);
+  if (!e.target.matches('input[type=checkbox]')) return;
+  const row = e.target.closest('tr');
+
+  // gw_suspend and gw_unsuspend are mutually exclusive
+  if (e.target.checked && e.target.dataset.action === 'gw_suspend') {
+    row.querySelectorAll('input[data-action="gw_unsuspend"]').forEach(cb => { cb.checked = false; });
+  } else if (e.target.checked && e.target.dataset.action === 'gw_unsuspend') {
+    row.querySelectorAll('input[data-action="gw_suspend"]').forEach(cb => { cb.checked = false; });
   }
+
+  const anyNonExemptChecked = Array.from(row.querySelectorAll('input[type=checkbox]:checked'))
+    .some(cb => !ACTIONS_NO_REASON.has(cb.dataset.action));
+  row.querySelector('.qr-inline')?.classList.toggle('d-none', !anyNonExemptChecked);
 });
 
 /* ── Execute (confirmation modal) ───────────────────────────────────────── */
@@ -232,16 +241,17 @@ document.getElementById('executeBtn').addEventListener('click', () => {
   const actions = gatherActions();
   if (!actions.length) { alert('Select at least one action.'); return; }
 
-  // Require a quarantine reason whenever Disable AD is checked
+  // Require a quarantine reason for rows with at least one non-exempt action checked
   let missingReason = false;
-  document.querySelectorAll('input[type=checkbox][data-action="ad_disable"]:checked').forEach(cb => {
-    const sel = cb.closest('tr')?.querySelector('.qr-reason');
-    if (sel && !sel.value) {
-      sel.classList.add('is-invalid');
-      missingReason = true;
-    }
+  const rowsNeedingReason = new Set();
+  document.querySelectorAll('input[type=checkbox]:checked').forEach(cb => {
+    if (!ACTIONS_NO_REASON.has(cb.dataset.action)) rowsNeedingReason.add(cb.closest('tr'));
   });
-  if (missingReason) { alert('Please select a Quarantine Reason for every Disable AD action.'); return; }
+  rowsNeedingReason.forEach(row => {
+    const sel = row.querySelector('.qr-reason');
+    if (sel && !sel.value) { sel.classList.add('is-invalid'); missingReason = true; }
+  });
+  if (missingReason) { alert('Please select a Quarantine Reason for every action.'); return; }
 
   const lines = actions
     .map(a => {
