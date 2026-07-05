@@ -132,6 +132,29 @@
     <!-- Stats -->
     <div class="d-flex flex-wrap align-items-center gap-2 mb-3" id="csvStatBadges"></div>
 
+    <!-- Filter bar -->
+    <div class="d-flex flex-wrap gap-2 mb-3 align-items-center">
+      <small class="text-muted fw-semibold me-1">Filter:</small>
+      <select id="csvFilterDomain" class="form-select form-select-sm" style="width:auto;">
+        <option value="">All Domains</option>
+      </select>
+      <select id="csvFilterStatus" class="form-select form-select-sm" style="width:auto;">
+        <option value="">All Statuses</option>
+        <option value="enabled">Enabled</option>
+        <option value="disabled">Disabled</option>
+        <option value="notfound">Not in AD</option>
+      </select>
+      <select id="csvFilterProcessed" class="form-select form-select-sm" style="width:auto;">
+        <option value="">Show All</option>
+        <option value="pending">Pending Only</option>
+        <option value="done">Processed Only</option>
+      </select>
+      <button id="csvFilterReset" type="button" class="btn btn-sm btn-outline-secondary">
+        <i class="bi bi-x-circle me-1"></i>Reset
+      </button>
+      <small id="csvFilterCount" class="text-muted ms-1"></small>
+    </div>
+
     <!-- Global reason / comment (applies to all selected CSV actions) -->
     <div class="row g-2 mb-3 align-items-end">
       <div class="col-auto">
@@ -181,6 +204,7 @@
       <span id="csvExecuteSpinner" class="spinner-border spinner-border-sm d-none me-1" role="status"></span>
       Execute CSV Actions
     </button>
+    <div id="csvExecError" class="text-danger small mt-1 d-none"></div>
 
     <!-- Execution results -->
     <div id="csvExecResultsSection" class="d-none mt-4">

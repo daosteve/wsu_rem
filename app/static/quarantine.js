@@ -263,6 +263,12 @@ document.getElementById('userTableBody').addEventListener('change', e => {
 
 /* ── Execute (confirmation modal) ───────────────────────────────────────── */
 const confirmModal = new bootstrap.Modal(document.getElementById('confirmModal'));
+let _pendingExecute = null;   // set by whichever tab opened the modal
+
+document.getElementById('confirmExecuteBtn').addEventListener('click', async () => {
+  confirmModal.hide();
+  if (_pendingExecute) { await _pendingExecute(); _pendingExecute = null; }
+});
 
 document.getElementById('executeBtn').addEventListener('click', () => {
   const actions = gatherActions();
@@ -271,7 +277,7 @@ document.getElementById('executeBtn').addEventListener('click', () => {
   // Require a quarantine reason for rows with at least one non-exempt action checked
   let missingReason = false;
   const rowsNeedingReason = new Set();
-  document.querySelectorAll('input[type=checkbox]:checked').forEach(cb => {
+  document.querySelectorAll('#userTableBody input[type=checkbox]:checked').forEach(cb => {
     if (!ACTIONS_NO_REASON.has(cb.dataset.action)) rowsNeedingReason.add(cb.closest('tr'));
   });
   rowsNeedingReason.forEach(row => {
@@ -292,30 +298,27 @@ document.getElementById('executeBtn').addEventListener('click', () => {
     `<pre class="small border rounded p-2 bg-light">${esc(lines)}</pre>` +
     `<p class="text-danger fw-bold mb-0">These actions cannot be undone.</p>`;
 
+  _pendingExecute = async () => {
+    const btn     = document.getElementById('executeBtn');
+    const spinner = document.getElementById('executeSpinner');
+    setSpinner(btn, spinner, true);
+    try {
+      const resp = await fetch('/execute', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF_TOKEN },
+        body: JSON.stringify({ actions }),
+      });
+      const data = await resp.json();
+      if (data.error) { alert(data.error); return; }
+      renderResults(data.results || []);
+    } catch (err) {
+      alert('Execute failed: ' + err);
+    } finally {
+      setSpinner(btn, spinner, false);
+    }
+  };
+
   confirmModal.show();
-});
-
-document.getElementById('confirmExecuteBtn').addEventListener('click', async () => {
-  const actions = gatherActions();
-  confirmModal.hide();
-
-  const btn     = document.getElementById('executeBtn');
-  const spinner = document.getElementById('executeSpinner');
-  setSpinner(btn, spinner, true);
-  try {
-    const resp = await fetch('/execute', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF_TOKEN },
-      body: JSON.stringify({ actions }),
-    });
-    const data = await resp.json();
-    if (data.error) { alert(data.error); return; }
-    renderResults(data.results || []);
-  } catch (err) {
-    alert('Execute failed: ' + err);
-  } finally {
-    setSpinner(btn, spinner, false);
-  }
 });
 
 function renderResults(results) {
@@ -409,7 +412,9 @@ document.getElementById('csvVerifyBtn').addEventListener('click', async () => {
     if (data.error) { alert(data.error); return; }
 
     _csvLastUsers = data.users || [];
+    populateCsvDomainFilter(_csvLastUsers);
     renderCsvUserTable(_csvLastUsers);
+    applyCsvFilters();
 
     const alreadyCount = _csvLastUsers.filter(u => _csvProcessed.has(u.username)).length;
     document.getElementById('csvStatBadges').innerHTML = `
@@ -481,11 +486,22 @@ function renderCsvUserTable(users) {
 }
 
 /* Execute CSV Actions ----------------------------------------------------- */
+function showCsvExecError(msg) {
+  const el = document.getElementById('csvExecError');
+  el.textContent = msg;
+  el.classList.remove('d-none');
+}
+function clearCsvExecError() {
+  document.getElementById('csvExecError').classList.add('d-none');
+}
+
 document.getElementById('csvExecuteBtn').addEventListener('click', () => {
+  clearCsvExecError();
   const reason = document.getElementById('csvReason').value;
   if (!reason) {
     document.getElementById('csvReason').classList.add('is-invalid');
-    alert('Please select a Quarantine Reason before executing.');
+    showCsvExecError('Please select a Quarantine Reason before executing.');
+    document.getElementById('csvReason').focus();
     return;
   }
   document.getElementById('csvReason').classList.remove('is-invalid');
@@ -495,7 +511,10 @@ document.getElementById('csvExecuteBtn').addEventListener('click', () => {
     document.querySelectorAll('#csvUserTableBody .csv-action-cb:checked:not(:disabled)')
   ).map(cb => ({ username: cb.dataset.user, action: cb.dataset.action, reason, comment }));
 
-  if (!actions.length) { alert('Select at least one action.'); return; }
+  if (!actions.length) {
+    showCsvExecError('No actions selected. Check at least one action checkbox in the table (use the column header checkboxes to select all).');
+    return;
+  }
 
   const uniqueUsers = new Set(actions.map(a => a.username)).size;
   const lines = actions
@@ -526,7 +545,7 @@ document.getElementById('csvExecuteBtn').addEventListener('click', () => {
       // Lock all executed users so they cannot be re-selected
       const executed = [...new Set(actions.map(a => a.username))];
       executed.forEach(u => _csvProcessed.add(u));
-      if (_csvLastUsers) renderCsvUserTable(_csvLastUsers);  // re-render with locks
+      if (_csvLastUsers) { renderCsvUserTable(_csvLastUsers); applyCsvFilters(); }
     } catch (err) {
       alert('Execute failed: ' + err);
     } finally {
@@ -559,3 +578,55 @@ function renderCsvExecResults(results) {
   sec.classList.remove('d-none');
   sec.scrollIntoView({ behavior: 'smooth' });
 }
+
+/* CSV filters ------------------------------------------------------------- */
+function populateCsvDomainFilter(users) {
+  const sel = document.getElementById('csvFilterDomain');
+  const domains = [...new Set(
+    users.filter(u => u.found && u.domain).map(u => u.domain)
+  )].sort();
+  sel.innerHTML = '<option value="">All Domains</option>' +
+    domains.map(d => `<option value="${esc(d)}">${esc(d)}</option>`).join('');
+}
+
+function applyCsvFilters() {
+  const domainVal    = document.getElementById('csvFilterDomain').value;
+  const statusVal    = document.getElementById('csvFilterStatus').value;
+  const processedVal = document.getElementById('csvFilterProcessed').value;
+  let visible = 0, total = 0;
+
+  document.querySelectorAll('#csvUserTableBody tr[data-username]').forEach(row => {
+    total++;
+    const username = row.dataset.username;
+    const u = _csvLastUsers && _csvLastUsers.find(x => x.username === username);
+    const isProcessed = _csvProcessed.has(username);
+    let show = true;
+
+    if (domainVal) {
+      if (!u || !u.found || u.domain !== domainVal) show = false;
+    }
+    if (statusVal === 'notfound')  { if (u && u.found)                  show = false; }
+    else if (statusVal === 'enabled')  { if (!u || !u.found || u.ad_disabled)  show = false; }
+    else if (statusVal === 'disabled') { if (!u || !u.found || !u.ad_disabled) show = false; }
+
+    if (processedVal === 'pending' && isProcessed)  show = false;
+    if (processedVal === 'done'    && !isProcessed) show = false;
+
+    row.classList.toggle('d-none', !show);
+    if (show) visible++;
+  });
+
+  const countEl = document.getElementById('csvFilterCount');
+  if (countEl) countEl.textContent = visible < total ? `Showing ${visible} of ${total}` : '';
+}
+
+['csvFilterDomain', 'csvFilterStatus', 'csvFilterProcessed'].forEach(id => {
+  const el = document.getElementById(id);
+  if (el) el.addEventListener('change', applyCsvFilters);
+});
+document.getElementById('csvFilterReset').addEventListener('click', () => {
+  document.getElementById('csvFilterDomain').value    = '';
+  document.getElementById('csvFilterStatus').value    = '';
+  document.getElementById('csvFilterProcessed').value = '';
+  applyCsvFilters();
+});
