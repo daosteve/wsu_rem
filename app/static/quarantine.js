@@ -66,7 +66,7 @@ function setSpinner(btn, spinner, on) {
 }
 
 function gatherActions() {
-  return Array.from(document.querySelectorAll('input[type=checkbox]:checked'))
+  return Array.from(document.querySelectorAll('#userTableBody input[type=checkbox]:checked'))
     .map(cb => {
       const row = cb.closest('tr');
       const reason  = row ? row.querySelector('.qr-reason')?.value  : '';
@@ -78,12 +78,39 @@ function gatherActions() {
 /* ── Lookup ─────────────────────────────────────────────────────────────── */
 const MAX_USERNAMES = 20;
 
+function normalizeUsernameToken(token) {
+  // Strip mailto: prefix
+  if (token.toLowerCase().startsWith('mailto:')) token = token.slice(7);
+  // Extract username from user@worcester.edu
+  const atIdx = token.indexOf('@');
+  if (atIdx !== -1) token = token.slice(0, atIdx);
+  return token;
+}
+
+function normalizeUsernamesText(text) {
+  return text.trim()
+    ? text.trim().split(/[\s,;]+/).filter(u => u.length > 0).map(normalizeUsernameToken).join('\n')
+    : text;
+}
+
 function countUsernames(text) {
   return text.trim() ? text.trim().split(/[\s,;]+/).filter(u => u.length > 0).length : 0;
 }
 
 const usernameInput = document.getElementById('usernameInput');
 const usernameCount = document.getElementById('usernameCount');
+
+usernameInput.addEventListener('paste', (e) => {
+  e.preventDefault();
+  const pasted = (e.clipboardData || window.clipboardData).getData('text');
+  const normalized = normalizeUsernamesText(pasted);
+  const start = usernameInput.selectionStart;
+  const end = usernameInput.selectionEnd;
+  const current = usernameInput.value;
+  usernameInput.value = current.slice(0, start) + normalized + current.slice(end);
+  usernameInput.dispatchEvent(new Event('input'));
+});
+
 usernameInput.addEventListener('input', () => {
   const n = countUsernames(usernameInput.value);
   usernameCount.textContent = `${n} / ${MAX_USERNAMES}`;
@@ -97,7 +124,7 @@ document.getElementById('lookupBtn').addEventListener('click', async () => {
 
   setSpinner(btn, spinner, true);
   try {
-    const text = document.getElementById('usernameInput').value.trim();
+    const text = normalizeUsernamesText(document.getElementById('usernameInput').value.trim());
     if (!text) { alert('Enter at least one username.'); return; }
     if (countUsernames(text) > MAX_USERNAMES) { alert(`Maximum ${MAX_USERNAMES} usernames allowed.`); return; }
     const resp = await fetch('/lookup', {
@@ -310,4 +337,225 @@ function renderResults(results) {
   const section = document.getElementById('resultsSection');
   section.classList.remove('d-none');
   section.scrollIntoView({ behavior: 'smooth' });
+}
+
+/* ── CSV Import tab ────────────────────────────────────────────────────── */
+const csvDropZone  = document.getElementById('csvDropZone');
+const csvFileInput = document.getElementById('csvFileInput');
+const csvFileLabel = document.getElementById('csvFileLabel');
+let   _csvDroppedFile    = null;   // file from drag-and-drop
+let   _csvLastUsers      = null;   // last verified user list (for re-render after lock)
+const _csvProcessed      = new Set(); // usernames executed this session
+
+const CSV_ACTIONS = ['ad_reset_password', 'gw_reset_cookies', 'entra_revoke_sessions'];
+
+/* drag-and-drop ----------------------------------------------------------- */
+csvDropZone.addEventListener('dragover', e => {
+  e.preventDefault();
+  csvDropZone.classList.add('border-primary', 'bg-light');
+});
+csvDropZone.addEventListener('dragleave', () => {
+  csvDropZone.classList.remove('border-primary', 'bg-light');
+});
+csvDropZone.addEventListener('drop', e => {
+  e.preventDefault();
+  csvDropZone.classList.remove('border-primary', 'bg-light');
+  const file = e.dataTransfer.files[0];
+  if (file) { _csvDroppedFile = file; updateCsvFileLabel(file.name); }
+});
+csvFileInput.addEventListener('change', () => {
+  _csvDroppedFile = null;
+  if (csvFileInput.files[0]) updateCsvFileLabel(csvFileInput.files[0].name);
+});
+function updateCsvFileLabel(name) {
+  csvFileLabel.textContent = name;
+  csvFileLabel.classList.remove('text-muted');
+  csvFileLabel.classList.add('fw-semibold');
+}
+
+/* select-all header checkboxes ------------------------------------------- */
+CSV_ACTIONS.forEach(action => {
+  const hdr = document.getElementById(`csvSelAll-${action}`);
+  if (!hdr) return;
+  hdr.addEventListener('change', () => {
+    document.querySelectorAll(
+      `#csvUserTableBody .csv-action-cb[data-action="${action}"]:not(:disabled)`
+    ).forEach(cb => { cb.checked = hdr.checked; });
+  });
+});
+
+/* Verify Users ------------------------------------------------------------ */
+document.getElementById('csvVerifyBtn').addEventListener('click', async () => {
+  const file = _csvDroppedFile || csvFileInput.files[0];
+  if (!file) { alert('Select a CSV file first.'); return; }
+
+  const btn     = document.getElementById('csvVerifyBtn');
+  const spinner = document.getElementById('csvVerifySpinner');
+  setSpinner(btn, spinner, true);
+  try {
+    const fd = new FormData();
+    fd.append('csv_file', file);
+    const resp = await fetch('/csv_lookup', {
+      method: 'POST',
+      headers: { 'X-CSRFToken': CSRF_TOKEN },
+      body: fd,
+    });
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({ error: `HTTP ${resp.status}` }));
+      alert(err.error || 'Verification failed.');
+      return;
+    }
+    const data = await resp.json();
+    if (data.error) { alert(data.error); return; }
+
+    _csvLastUsers = data.users || [];
+    renderCsvUserTable(_csvLastUsers);
+
+    const alreadyCount = _csvLastUsers.filter(u => _csvProcessed.has(u.username)).length;
+    document.getElementById('csvStatBadges').innerHTML = `
+      <span class="badge bg-secondary me-1">${data.total_in_csv} unique users in CSV</span>
+      <span class="badge bg-success me-1">${data.found} found in AD</span>
+      ${data.not_found ? `<span class="badge bg-warning text-dark me-1">${data.not_found} not found in AD</span>` : ''}
+      ${alreadyCount ? `<span class="badge bg-dark me-1">${alreadyCount} already processed this session</span>` : ''}
+    `;
+
+    document.getElementById('csvExecResultsSection').classList.add('d-none');
+    document.getElementById('csvVerifySection').classList.remove('d-none');
+    document.getElementById('csvVerifySection').scrollIntoView({ behavior: 'smooth' });
+  } catch (err) {
+    alert('Verification failed: ' + err);
+  } finally {
+    setSpinner(btn, spinner, false);
+  }
+});
+
+/* render CSV user table --------------------------------------------------- */
+function renderCsvUserTable(users) {
+  const tbody = document.getElementById('csvUserTableBody');
+  tbody.innerHTML = '';
+
+  users.forEach(u => {
+    const tr = document.createElement('tr');
+    tr.dataset.username = u.username;
+    const processed = _csvProcessed.has(u.username);
+
+    if (!u.found) {
+      tr.classList.add('table-warning');
+      tr.innerHTML = `
+        <td class="font-monospace">${esc(u.username)}
+          <span class="badge bg-warning text-dark ms-1 small">Not in AD</span>
+        </td>
+        <td colspan="3" class="text-center text-muted fst-italic small">Not found in Active Directory</td>
+      `;
+    } else {
+      if (processed) tr.classList.add('table-secondary');
+      const adBadge = u.ad_disabled
+        ? '<span class="badge bg-danger ms-1">Disabled</span>'
+        : '<span class="badge bg-success ms-1">Enabled</span>';
+      const domainPart = u.domain ? ` ${domainBadge(u.domain)}` : '';
+      const ouPart     = u.ou
+        ? `<br><span class="text-muted small">${esc(u.ou)}</span>` : '';
+      const displayPart = (u.display_name && u.display_name !== u.username)
+        ? ` <span class="text-muted">(${esc(u.display_name)})</span>` : '';
+      const procBadge  = processed
+        ? ' <span class="badge bg-secondary ms-1">Processed</span>' : '';
+
+      const mkCb = action => {
+        if (processed)
+          return `<td class="text-center action-cell"><span class="text-muted">—</span></td>`;
+        return `<td class="text-center action-cell">
+          <input type="checkbox" class="form-check-input csv-action-cb"
+                 data-user="${esc(u.username)}" data-action="${action}">
+        </td>`;
+      };
+
+      tr.innerHTML = `
+        <td>
+          <span class="badge bg-dark font-monospace">${esc(u.username)}</span>${displayPart}${domainPart}${adBadge}${procBadge}${ouPart}
+        </td>
+        ${CSV_ACTIONS.map(mkCb).join('')}
+      `;
+    }
+    tbody.appendChild(tr);
+  });
+}
+
+/* Execute CSV Actions ----------------------------------------------------- */
+document.getElementById('csvExecuteBtn').addEventListener('click', () => {
+  const reason = document.getElementById('csvReason').value;
+  if (!reason) {
+    document.getElementById('csvReason').classList.add('is-invalid');
+    alert('Please select a Quarantine Reason before executing.');
+    return;
+  }
+  document.getElementById('csvReason').classList.remove('is-invalid');
+
+  const comment = document.getElementById('csvComment').value.trim();
+  const actions = Array.from(
+    document.querySelectorAll('#csvUserTableBody .csv-action-cb:checked:not(:disabled)')
+  ).map(cb => ({ username: cb.dataset.user, action: cb.dataset.action, reason, comment }));
+
+  if (!actions.length) { alert('Select at least one action.'); return; }
+
+  const uniqueUsers = new Set(actions.map(a => a.username)).size;
+  const lines = actions
+    .map(a => `• ${a.username}  →  ${ACTION_LABELS[a.action] || a.action}`)
+    .join('\n');
+
+  document.getElementById('confirmModalBody').innerHTML =
+    `<p>You are about to execute <strong>${actions.length}</strong> action(s) across ` +
+    `<strong>${uniqueUsers}</strong> user(s).</p>` +
+    `<pre class="small border rounded p-2 bg-light">${esc(lines)}</pre>` +
+    `<p><strong>Reason:</strong> ${esc(reason)}${comment ? ` &mdash; ${esc(comment)}` : ''}</p>` +
+    `<p class="text-danger fw-bold mb-0">These actions cannot be undone. ` +
+    `Processed users will be locked from re-selection.</p>`;
+
+  _pendingExecute = async () => {
+    const btn     = document.getElementById('csvExecuteBtn');
+    const spinner = document.getElementById('csvExecuteSpinner');
+    setSpinner(btn, spinner, true);
+    try {
+      const resp = await fetch('/execute', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF_TOKEN },
+        body: JSON.stringify({ actions }),
+      });
+      const data = await resp.json();
+      if (data.error) { alert(data.error); return; }
+      renderCsvExecResults(data.results || []);
+      // Lock all executed users so they cannot be re-selected
+      const executed = [...new Set(actions.map(a => a.username))];
+      executed.forEach(u => _csvProcessed.add(u));
+      if (_csvLastUsers) renderCsvUserTable(_csvLastUsers);  // re-render with locks
+    } catch (err) {
+      alert('Execute failed: ' + err);
+    } finally {
+      setSpinner(btn, spinner, false);
+    }
+  };
+
+  confirmModal.show();
+});
+
+function renderCsvExecResults(results) {
+  const tbody = document.getElementById('csvExecResultsTableBody');
+  tbody.innerHTML = '';
+  results.forEach(r => {
+    const tr = document.createElement('tr');
+    const rowClass   = r.result === 'success' ? 'table-success'
+                     : r.result === 'warning' ? 'table-warning' : 'table-danger';
+    const badgeClass = r.result === 'success' ? 'success'
+                     : r.result === 'warning' ? 'warning text-dark' : 'danger';
+    tr.classList.add(rowClass);
+    tr.innerHTML = `
+      <td class="font-monospace">${esc(r.username)}</td>
+      <td>${esc(ACTION_LABELS[r.action] || r.action)}</td>
+      <td><span class="badge bg-${badgeClass}">${esc(r.result)}</span></td>
+      <td class="small">${esc(r.detail || '')}</td>
+    `;
+    tbody.appendChild(tr);
+  });
+  const sec = document.getElementById('csvExecResultsSection');
+  sec.classList.remove('d-none');
+  sec.scrollIntoView({ behavior: 'smooth' });
 }

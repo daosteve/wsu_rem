@@ -192,6 +192,7 @@ def lookup_users(cfg: dict, usernames: list) -> list:
             results.append({
                 'username': username,
                 'found': True,
+                'dn': dn,
                 'display_name': str(entry.displayName) if entry.displayName else username,
                 'email': str(entry.mail) if entry.mail else '',
                 'ad_disabled': bool(uac & _ADS_UF_ACCOUNTDISABLE),
@@ -312,17 +313,19 @@ def enable_user(cfg: dict, username: str, original_dn: str = None, operator: str
         return 'error', str(exc)
 
 
-def reset_password(cfg: dict, username: str, new_password: str = None) -> tuple:
+def reset_password(cfg: dict, username: str, new_password: str = None, dn: str = None) -> tuple:
     """
     Reset an AD account password.
     Requires LDAPS – the connection already enforces SSL.
+    Pass `dn` (from a prior lookup_users call) to skip the redundant GC lookup.
     """
     new_password = new_password or cfg['AD_RESET_PASSWORD']
     try:
-        # Lookup via Global Catalog (read-only, spans all child domains)
-        gc_conn = _svc_conn(cfg)
-        dn, entry = _find_user(gc_conn, cfg, username)
-        gc_conn.unbind()
+        if dn is None:
+            # Lookup via Global Catalog (read-only, spans all child domains)
+            gc_conn = _svc_conn(cfg)
+            dn, entry = _find_user(gc_conn, cfg, username)
+            gc_conn.unbind()
         if dn is None:
             return 'error', 'User not found in AD'
         # AD requires the new password surrounded by double quotes, encoded as UTF-16-LE

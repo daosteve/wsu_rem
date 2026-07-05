@@ -1,6 +1,7 @@
 import csv
 import io
 import re
+import time
 from datetime import datetime
 
 from flask import render_template, request, jsonify, current_app
@@ -116,6 +117,81 @@ def lookup():
     return jsonify({'users': results})
 
 
+@bp.route('/csv_lookup', methods=['POST'])
+@login_required
+def csv_lookup():
+    """Parse an uploaded CSV, extract unique usernames from the 'Host User Email'
+    column, and look them up in AD (no GW/Entra enrichment for speed).
+    Returns the same user shape as /lookup without the 20-user cap.
+    """
+    f = request.files.get('csv_file')
+    if not f or not f.filename:
+        return jsonify({'error': 'No CSV file provided.'}), 400
+
+    try:
+        raw = io.StringIO(f.read().decode('utf-8', errors='replace'))
+    except Exception as exc:
+        return jsonify({'error': f'Failed to read file: {exc}'}), 400
+
+    EMAIL_COLUMN = 'Host User Email'
+    seen: set = set()
+    usernames: list = []
+
+    try:
+        reader = csv.DictReader(raw)
+        for row in reader:
+            email = (row.get(EMAIL_COLUMN) or '').strip()
+            if not email:
+                for v in row.values():
+                    if v and '@' in str(v):
+                        email = str(v).strip()
+                        break
+            if not email:
+                continue
+            if email.lower().startswith('mailto:'):
+                email = email[7:]
+            username = email.split('@')[0] if '@' in email else email
+            if not _USERNAME_RE.match(username):
+                continue
+            if username not in seen:
+                seen.add(username)
+                usernames.append(username)
+    except Exception as exc:
+        return jsonify({'error': f'Failed to parse CSV: {exc}'}), 400
+
+    if not usernames:
+        return jsonify({'error': 'No valid usernames found in CSV.'}), 400
+
+    MAX_CSV_USERS = 2000
+    if len(usernames) > MAX_CSV_USERS:
+        return jsonify({
+            'error': f'CSV contains {len(usernames)} unique users; maximum is {MAX_CSV_USERS}.'
+        }), 400
+
+    results = active_directory.lookup_users(current_app.config, usernames)
+    # Filter out internal LDAP error sentinels
+    results = [u for u in results if u.get('username') != '__LDAP_ERROR__']
+
+    quarantined = {
+        r.username
+        for r in QuarantineRecord.query.filter(
+            QuarantineRecord.username.in_(usernames)
+        ).all()
+    }
+    for user in results:
+        if user.get('found'):
+            user['quarantined_by_us'] = user['username'] in quarantined
+
+    found_count    = sum(1 for u in results if u.get('found'))
+    not_found_count = sum(1 for u in results if not u.get('found'))
+    return jsonify({
+        'users':        results,
+        'total_in_csv': len(usernames),
+        'found':        found_count,
+        'not_found':    not_found_count,
+    })
+
+
 @bp.route('/execute', methods=['POST'])
 @login_required
 def execute():
@@ -217,3 +293,154 @@ def execute():
         pass
 
     return jsonify({'results': results})
+
+
+@bp.route('/csv_remediate', methods=['POST'])
+@login_required
+def csv_remediate():
+    """Parse an uploaded CSV, extract unique usernames from the 'Host User Email'
+    column (stripping mailto: and @domain suffixes), then for every user found in
+    AD execute: ad_reset_password · gw_reset_cookies · entra_revoke_sessions.
+
+    De-duplicates rows first so each user's APIs are called exactly once,
+    keeping the request count proportional to unique accounts, not CSV rows.
+    """
+    f = request.files.get('csv_file')
+    if not f or not f.filename:
+        return jsonify({'error': 'No CSV file provided.'}), 400
+
+    try:
+        stream = io.StringIO(f.read().decode('utf-8', errors='replace'))
+    except Exception as exc:
+        return jsonify({'error': f'Failed to read file: {exc}'}), 400
+
+    EMAIL_COLUMN = 'Host User Email'
+    seen: set = set()
+    usernames: list = []
+
+    try:
+        reader = csv.DictReader(stream)
+        for row in reader:
+            email = (row.get(EMAIL_COLUMN) or '').strip()
+            if not email:
+                # Fallback: first cell value that contains '@'
+                for v in row.values():
+                    if v and '@' in str(v):
+                        email = str(v).strip()
+                        break
+            if not email:
+                continue
+            if email.lower().startswith('mailto:'):
+                email = email[7:]
+            username = email.split('@')[0] if '@' in email else email
+            if not _USERNAME_RE.match(username):
+                continue
+            if username not in seen:
+                seen.add(username)
+                usernames.append(username)
+    except Exception as exc:
+        return jsonify({'error': f'Failed to parse CSV: {exc}'}), 400
+
+    if not usernames:
+        return jsonify({'error': 'No valid usernames found in CSV.'}), 400
+
+    MAX_CSV_USERS = 2000
+    if len(usernames) > MAX_CSV_USERS:
+        return jsonify({
+            'error': (
+                f'CSV contains {len(usernames)} unique users; maximum is {MAX_CSV_USERS}. '
+                'Split the file into smaller batches.'
+            )
+        }), 400
+
+    cfg = current_app.config
+
+    # Single LDAP connection for all unique usernames
+    ad_results = active_directory.lookup_users(cfg, usernames)
+    found_users = [u for u in ad_results if u.get('found')]
+
+    gw_configured    = not google_workspace._not_configured(cfg)
+    entra_configured = not entra_id._not_configured(cfg)
+
+    # Throttle: pause between each user's GW and Entra calls to stay well
+    # below API rate limits when processing large CSVs.
+    _GW_ENTRA_DELAY = 0.3   # seconds between Google → Entra call per user
+    _USER_DELAY     = 0.1   # seconds between users
+
+    results: list = []
+    log_entries: list = []
+
+    for user in found_users:
+        username = user['username']
+        row_actions: list = []
+
+        # 1 · AD reset password (pass dn to skip redundant LDAP lookup)
+        try:
+            r, d = active_directory.reset_password(cfg, username, dn=user.get('dn'))
+        except Exception as exc:
+            r, d = 'error', str(exc)
+        row_actions.append({'action': 'ad_reset_password', 'result': r, 'detail': d})
+        log_entries.append(OperationLog(
+            operator=current_user.username, target_username=username,
+            action='ad_reset_password', system='AD', result=r, detail=d,
+        ))
+
+        # 2 · Google reset sign-in cookies
+        time.sleep(_GW_ENTRA_DELAY)
+        if gw_configured:
+            try:
+                r, d = google_workspace.reset_sign_in_cookies(cfg, username)
+            except Exception as exc:
+                r, d = 'error', str(exc)
+            log_entries.append(OperationLog(
+                operator=current_user.username, target_username=username,
+                action='gw_reset_cookies', system='GW', result=r, detail=d,
+            ))
+        else:
+            r, d = 'skipped', 'Google Workspace not configured'
+        row_actions.append({'action': 'gw_reset_cookies', 'result': r, 'detail': d})
+
+        # 3 · Entra revoke sign-in sessions
+        time.sleep(_GW_ENTRA_DELAY)
+        if entra_configured:
+            try:
+                r, d = entra_id.revoke_sessions(cfg, username)
+            except Exception as exc:
+                r, d = 'error', str(exc)
+            log_entries.append(OperationLog(
+                operator=current_user.username, target_username=username,
+                action='entra_revoke_sessions', system='Entra', result=r, detail=d,
+            ))
+        else:
+            r, d = 'skipped', 'Entra ID not configured'
+        row_actions.append({'action': 'entra_revoke_sessions', 'result': r, 'detail': d})
+
+        results.append({'username': username, 'found': True, 'actions': row_actions})
+        time.sleep(_USER_DELAY)
+
+    # Append not-found entries (no API calls made for these)
+    for u in ad_results:
+        if not u.get('found'):
+            results.append({'username': u['username'], 'found': False, 'actions': []})
+
+    if log_entries:
+        db.session.add_all(log_entries)
+        db.session.commit()
+
+    # Best-effort email alert (flatten to same shape as /execute results)
+    flat = [
+        {'username': r['username'], 'action': a['action'],
+         'result': a['result'], 'detail': a['detail']}
+        for r in results for a in r.get('actions', [])
+    ]
+    try:
+        email_alerts.send_operation_alert(cfg, current_user.username, flat)
+    except Exception:
+        pass
+
+    return jsonify({
+        'total_unique': len(usernames),
+        'found':        len(found_users),
+        'not_found':    len(usernames) - len(found_users),
+        'results':      results,
+    })
