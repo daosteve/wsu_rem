@@ -382,7 +382,7 @@ CSV_ACTIONS.forEach(action => {
   if (!hdr) return;
   hdr.addEventListener('change', () => {
     document.querySelectorAll(
-      `#csvUserTableBody .csv-action-cb[data-action="${action}"]:not(:disabled)`
+      `#csvUserTableBody tr[data-username]:not(.d-none) .csv-action-cb[data-action="${action}"]:not(:disabled)`
     ).forEach(cb => { cb.checked = hdr.checked; });
   });
 });
@@ -508,7 +508,7 @@ document.getElementById('csvExecuteBtn').addEventListener('click', () => {
 
   const comment = document.getElementById('csvComment').value.trim();
   const actions = Array.from(
-    document.querySelectorAll('#csvUserTableBody .csv-action-cb:checked:not(:disabled)')
+    document.querySelectorAll('#csvUserTableBody tr[data-username]:not(.d-none) .csv-action-cb:checked:not(:disabled)')
   ).map(cb => ({ username: cb.dataset.user, action: cb.dataset.action, reason, comment }));
 
   if (!actions.length) {
